@@ -1310,7 +1310,6 @@ class Linkedin:
                                 except:
                                     self.driver.execute_script("arguments[0].click();", growing_popup)
                             except TimeoutException as e:
-                                logger.info(f"No growing network message popup found: {e.msg}")
                                 try:
                                     close_to_reach_limit_button = WebDriverWait(self.driver, 5).until(
                                         EC.element_to_be_clickable((By.XPATH, selectors['close_to_reach_limit_button']))
@@ -1322,7 +1321,6 @@ class Linkedin:
                                         self.driver.execute_script("arguments[0].click();", close_to_reach_limit_button)
 
                                 except TimeoutException as e:
-                                    logger.info(f"No close to reach limit button found: {e.msg}")
                                     try:
                                         reached_limit_button = WebDriverWait(self.driver, 5).until(
                                             EC.element_to_be_clickable((By.XPATH, selectors['reached_limit_button']))
@@ -1342,7 +1340,6 @@ class Linkedin:
                                     except:
                                         pass
                         except TimeoutException as e:
-                            logger.info(f"No popup box found: {e.msg}")
                             pass
                         time.sleep(np.random.uniform(1, 2))
     
