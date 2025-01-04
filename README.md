@@ -1,0 +1,244 @@
+# LinkedIn Connection Bot
+
+An advanced LinkedIn automation bot that handles connection requests, connection withdrawals, and various security challenges using Selenium WebDriver.
+
+## Key Features
+
+- Send connection requests with smart paging and retry logic
+- Withdraw pending connection requests with configurable thresholds
+- Handle LinkedIn security features:
+  - Email verification codes
+  - Phone number verification
+  - CAPTCHA challenges
+  - Security checkpoints
+- Smart rate limiting and daily request caps
+- Automatic log rotation
+- Email notifications for events and errors
+- Human-like mouse movements and delays
+- Headless operation support
+
+## Prerequisites
+
+- Python 3.8+
+- Google Chrome
+- ChromeDriver (compatible with Chrome version)
+- Xvfb (for headless operation)
+- SMTP access (Gmail recommended)
+- IMAP access for email verification
+
+## Installation
+
+1. Clone and setup virtual environment:
+
+   ```bash
+   git clone https://github.com/yourusername/linkedin-bot.git
+   cd linkedin-bot
+   ```
+
+2. Install Google Chrome:
+
+   ```bash
+   wget https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
+   sudo apt-get install -y ./google-chrome-stable_current_amd64.deb
+   ```
+
+3. Check the version of the installed Google Chrome:
+
+   ```bash
+   google-chrome --version
+   ```
+
+4. Download the compatible ChromeDriver version from [here](https://googlechromelabs.github.io/chrome-for-testing/) and extract the file:
+
+   ```bash
+   wget https://edgedl.me.gvt1.com/edgedl/chrome/chrome-for-testing/YOUR_VERSION_NUMBER/linux64/chromedriver-linux64.zip
+   unzip chromedriver-linux64.zip
+   sudo mv chromedriver-linux64/chromedriver /usr/local/bin/
+   ```
+
+5. Install a virtual display for running Chrome in headless mode:
+
+   ```bash
+   sudo apt-get install -y xvfb
+   ```
+
+6. Create a Python virtual environment and activate it:
+
+   ```bash
+   python3 -m venv venv
+   source venv/bin/activate
+   ```
+
+7. Install the required Python packages:
+
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+8. Create a 
+
+.env
+
+ file in the root directory with the following variables:
+
+   ```env
+   # LinkedIn credentials
+   LINKEDIN_USER_MAIL=your_linkedin_email
+   LINKEDIN_PASS=your_linkedin_password
+
+   # Email settings for sending notifications
+   SENDER=your_email
+   SENDER_PASS=your_email_password
+   RECEIVER=receiver_email
+   SMTP_SERVER_SENDER=smtp.gmail.com
+   SMTP_PORT_SENDER=465
+
+   # Email server settings for LinkedIn verification code
+   EMAIL_SERVER_HOST_LINKEDIN=imap.gmail.com
+   LINKEDIN_MAILBOX_PASS=your_linkedin_email_password
+   LINKEDIN_INBOX_FOLDER=INBOX
+   EMAIL_LINKEDIN_CODE=security-noreply@linkedin.com
+
+   # Other settings
+   WAITING_BEFORE_CHECK=40
+   HEADLESS=True
+   MAX_REQUESTS_PER_DAY=5
+   MIN_CONNECTIONS_PENDING=300
+   CHROMEDRIVER_PATH=/usr/local/bin/chromedriver
+   BOT_VENV_NAME=linkedin
+   ```
+
+   **Note:** If using Gmail, you may need to generate an app password for `SENDER_PASS`. See [this guide](https://support.google.com/mail/answer/185833) for more information.
+
+### Usage
+
+1. Run the bot:
+
+   ```bash
+   python main.py
+   ```
+
+2. The bot will start sending connection requests. If an error occurs, it will send an email notification and close the browser.
+
+### Customization
+
+- Modify the `main.py` file to change the bot's behavior.
+- Adjust the settings in the 
+
+.env
+
+ file to match your requirements.
+
+### Logging
+
+Logs are generated using the 
+
+logger
+
+ module and can be found in the log files created in the project directory.
+
+### Cron Job Setup
+
+To automate the bot to run at specific intervals, you can set up a cron job using the 
+
+run_cron_job.sh
+
+ script.
+
+1. Make the script executable:
+
+   ```bash
+   chmod +x run_cron_job.sh
+   ```
+
+2. Run the script:
+
+   ```bash
+   ./run_cron_job.sh
+   ```
+
+This will set up a cron job to run the bot at 9:00 AM daily.
+
+### Troubleshooting
+
+- Ensure that all environment variables are correctly set in the 
+
+.env
+
+ file.
+- Make sure that ChromeDriver is compatible with your installed version of Google Chrome.
+- Check the log files for detailed error messages.
+- If you encounter login issues, verify that your LinkedIn credentials are correct and that your account is not locked.
+
+## Project Structure
+
+```
+├── .env
+├── conf_logrotate/
+├── days/
+├── exceptions/
+├── htmls/
+├── linkedin/
+├── logger/
+├── logs/
+├── main.py
+├── notebooks/
+├── org/
+├── README.md
+├── remote.sh
+├── requirements.txt
+├── run_connections_bot.sh
+├── run_cron_job.sh
+└── weeks/
+```
+
+- **`main.py`**: Entry point of the bot.
+- **
+
+linkedin
+
+**: Contains the LinkedIn interaction logic.
+- **
+
+exceptions
+
+**: Custom exception classes.
+- **
+
+org
+
+**: Organization-related data and scripts.
+- **
+
+notebooks
+
+**: Jupyter notebooks for development and testing.
+- **
+
+logger
+
+**: Logging configurations.
+- **
+
+logs
+
+**: Log files generated by the bot.
+- **
+
+run_cron_job.sh
+
+**: Script to set up the cron job.
+- **
+
+requirements.txt
+
+**: Python dependencies.
+- **`.env`**: Environment variables file.
+
+## Contributing
+
+Feel free to submit issues or pull requests if you find any bugs or have suggestions for improvements.
+
+## License
+
+This project is licensed under the MIT License.

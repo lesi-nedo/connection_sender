@@ -1,0 +1,7 @@
+.env
+conf_logrotate/*
+days/*
+htmls/*
+logs/*
+months/*
+weeks/*
