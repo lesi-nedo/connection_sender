@@ -4,7 +4,7 @@ This project is a Linkedin bot that automates the process of sending connection 
 
 ## TL;DR
 `run_cron_job.sh` script sets up a cron job to run the bot daily at random times between the 07:00 AM and 9:59 PM. The bot sends connection requests to Linkedin users. It finds users by searching for a company/university taken from `org/orgs.csv` file.
-The file must have: `org_name` columns. The bot will search for people in the company/university and send connection requests to them. The bot will stop when the weekly limit is reached. 
+The file must have: `org_name` columns. The bot will stop when the daily set limit is reached or the linkedin weekly one is reached. 
 
 ## Features
 
