@@ -63,21 +63,21 @@ This project is a Linkedin bot that automates the process of sending connection 
     LINKEDIN_PASS=your_linkedin_password
     LINKEDIN_USER_MAIL=your_linkedin_email
     LINKEDIN_MAILBOX_PASS=your_email_app_password
-    LINKEDIN_INBOX_FOLDER=INBOX
+    LINKEDIN_INBOX_FOLDER=INBOX # depends on your email provider
     EMAIL_SERVER_HOST_LINKEDIN=outlook.office365.com  # or imap.gmail.com for Gmail
-    PHONE_NUMBER=your_phone_number
-    EMAIL_LINKEDIN_CODE=security-noreply@linkedin.com
+    PHONE_NUMBER=your_phone_number # for phone verification
+    EMAIL_LINKEDIN_CODE=security-noreply@linkedin.com # the email from which the security code is sent
     
-    SENDER=your_notification_email
+    SENDER=your_notification_email # the email from which the notifications are sent
     SENDER_INBOX_FOLDER=inbox
     SENDER_PASS=your_notification_email_password
     EMAIL_SERVER_HOST_SENDER=imap.gmail.com
     SMTP_SERVER_SENDER=smtp.gmail.com
     SMTP_PORT_SENDER=465
     
-    RECEIVER=email_to_receive_notifications
+    RECEIVER=email_to_receive_notifications # the email to which the notifications are sent
     
-    WAITING_BEFORE_CHECK=40
+    WAITING_BEFORE_CHECK=40 # seconds
     HEADLESS=True
     MAX_REQUESTS_PER_DAY=24
     MIN_REQUESTS_PER_DAY=15
@@ -271,29 +271,6 @@ The `run_cron_job.sh` script handles the initial setup and configuration of the 
 - Verifies script permissions
 - Confirms environment accessibility
 
-#### Usage Example
-```bash
-# Make script executable
-chmod +x run_cron_job.sh
-
-# Run setup
-./run_cron_job.sh
-
-# Verify cron installation
-crontab -l
-```
-
-- Runs daily at 7:00 AM the `run_connections_bot.sh` script
-
-
-#### Usage Example
-```bash
-# Direct execution
-python main_withdraw.py
-
-# View withdrawal logs
-tail -f logs/linkedin.log
-```
 
 ### Troubleshooting
 
@@ -359,6 +336,8 @@ tail -f logs/linkedin.log
 2. Run the setup script:
     ```bash
     ./run_cron_job.sh
+
+    tail -f logs/linkedin.log
     ```
 
 This will:
@@ -372,7 +351,7 @@ This will:
 
 
 
-### Sending Connection/Withdrawing Requests Right Away
+### Right Away Execution
 1. For sending connection requests:
     ```bash
     python main_connections.py
@@ -388,7 +367,7 @@ This will:
 ### Connection Request Settings
 - `MAX_REQUESTS_PER_DAY`: Maximum number of connection requests per day (default: 24)
 - `MIN_REQUESTS_PER_DAY`: Minimum number of connection requests per day (default: 15)
-- `MIN_CONNECTIONS_PENDING`: Minimum number of pending connections before withdrawing (default: 300)
+- `MIN_CONNECTIONS_PENDING`: Minimum number of pending connections active (won't go below) (default: 300)
 
 ### Bot Behavior
 - `WAITING_BEFORE_CHECK`: Time to wait between checks for the captcha email response in seconds (default: 40)
