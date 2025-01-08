@@ -12,7 +12,7 @@ import math
 import ssl
 import re
 import glob
-
+import subprocess
 
 ROOT_DIR = os.path.join(os.path.dirname(__file__), "..")
 sys.path.append(ROOT_DIR)
@@ -70,8 +70,12 @@ class Linkedin:
         self.options = webdriver.ChromeOptions()
         self.options_set()
         logger.info("Options set")
+        self.chromedriver_path = None
+        self.chrome_exec_path = None
         self.check_if_chromedriver_exists()
-        service = webdriver.ChromeService(executable_path=os.getenv("CHROMEDRIVER_PATH"))
+        logger.info(f"Chrome exec path: {self.chrome_exec_path}")
+        logger.info(f"Chrome driver path: {self.chromedriver_path}")
+        service = webdriver.ChromeService(executable_path=self.chromedriver_path)
         self.options.binary_location = self.chrome_exec_path
         try:
             self.driver = webdriver.Chrome(options=self.options, service=service)
@@ -125,13 +129,57 @@ class Linkedin:
         self.sent_connections_org = dict()
         self.org_name = None
 
+
+    def get_chromedriver_version(self, base_dir = Path.home() / ".cache" / "selenium" , folder='chromedriver'):
+        base_dir = base_dir / folder
+        if base_dir.exists():
+            folders = [item for item in base_dir.iterdir() if item.is_dir()]
+            if len(folders) > 0:
+                return self.get_chromedriver_version(base_dir=base_dir, folder=folders[-1].name)
+            else:
+                all_files = set([item for item in base_dir.iterdir() if item.is_file()])
+
+                if base_dir / 'chromedriver' in all_files:
+                    return base_dir.name
+            
+        return None
+
     def check_if_chromedriver_exists(self):
+        chrome_driver_version = None
         if not os.path.exists(os.getenv("CHROMEDRIVER_PATH")):
-            logger.error("Chromedriver does not exist")
-            raise FileNotFoundError("Chromedriver does not exist")
+            chrome_driver_version = self.get_chromedriver_version()
+            if chrome_driver_version:
+                self.chromedriver_path = str(Path.home() / ".cache" / "selenium" / "chromedriver" / chrome_driver_version / "chromedriver")
+            else:    
+                logger.error("Chromedriver does not exist")
+                raise FileNotFoundError("Chromedriver does not exist")
+        else:
+            self.chromedriver_path = os.getenv("CHROMEDRIVER_PATH")
+            args = (self.chromedriver_path, "--version")
+            popen = subprocess.Popen(args, stdout=subprocess.PIPE)
+            popen.wait()
+            output = popen.stdout.read().decode("utf-8")
+            match = re.search(r"ChromeDriver (\d+\.\d+\.\d+\.\d+)", output)
+            if match:
+                chrome_driver_version = match.group(1)
         path_ = os.getenv("CHROME_EXEC_PATH") or "/usr/bin/google-chrome"
         if not os.path.exists(path_):
-            logger.error("Chrome does not exist")
+            base_dir = Path.home() / ".cache" / "selenium" / "chrome" / chrome_driver_version
+            if base_dir.exists():
+                self.chrome_exec_path = base_dir / "chrome"
+                return
+            else:
+                chrome_driver_version = self.get_chromedriver_version()
+                
+                if chrome_driver_version:
+
+                    base_dir = Path.home() / ".cache" / "selenium" / "chrome" 
+                    folders = [item for item in base_dir.iterdir() if item.is_dir()]
+                    base_dir = base_dir / folders[-1].name /  chrome_driver_version
+                    if base_dir.exists():
+                        self.chrome_exec_path = str(base_dir / "chrome")
+                    return
+            logger.error(f"HERE {chrome_driver_version}")
             raise FileNotFoundError("Chrome does not exist")
         self.chrome_exec_path = path_
     
@@ -754,11 +802,11 @@ class Linkedin:
                     return False
 
     def check_if_restricted(self):
-        h1_restricted_xpath = "//h1[contains(., 'Access to your account has been temporarily restricted')]"
+        temporary_restricted_button = "//a[@role='button' and contains(@class, 'id__verify-btn__primary')]"
 
         try:
-            WebDriverWait(self.driver, 2).until(
-                EC.presence_of_element_located((By.XPATH, h1_restricted_xpath))
+            WebDriverWait(self.driver, 4).until(
+                EC.presence_of_element_located((By.XPATH, temporary_restricted_button))
             )
             logger.warning("Access to account restricted")
             raise AccountRestrictedException("Access to account restricted")
@@ -787,7 +835,7 @@ class Linkedin:
                 driver.get("https://www.Linkedin.com/login")
                 
                 # Wait for page load
-                WebDriverWait(driver, 10).until(
+                WebDriverWait(driver, 5).until(
                     EC.presence_of_element_located((By.ID, "username"))
                 )
                 
@@ -837,12 +885,11 @@ class Linkedin:
                     self.check_if_feed()
                     
                     # Wait for feed to verify successful login
-                    WebDriverWait(driver, 10).until(
+                    WebDriverWait(driver, 5).until(
                         EC.presence_of_element_located((By.ID, "global-nav"))
                     )
                     
                     logger.info("Successfully logged in")
-                    return True
                 except AccountRestrictedException:
                     raise
                 except Exception as e:
@@ -853,9 +900,9 @@ class Linkedin:
             except AccountRestrictedException:
                 raise
             except Exception as e:
-                logger.error(f"Login attempt {attempt + 1} failed: {str(e)}")
+                logger.error(f"Login attempt {attempt + 1} failed: {e.msg}")
                 self.write_response(driver.page_source, f"login_error_{attempt}.html")
-                
+                self.check_if_restricted() 
                 if attempt < max_retries - 1:
                     logger.info(f"Retrying login... ({attempt + 2}/{max_retries})")
                     time.sleep(np.random.randint(30, 60))  # Wait before retry
@@ -866,7 +913,7 @@ class Linkedin:
             finally:
                 if "Sign In" in driver.title:
                     logger.error("Still on login page")
-                    return False
+                    raise LoginException("Failed to login")
         
 
 
@@ -1566,7 +1613,7 @@ class Linkedin:
             logger.info("No email verification code required")
             return False
 
-    def check_if_captcha(self, max_retries=3, base_timeout=5):
+    def check_if_captcha(self, max_retries=3, base_timeout=7):
         """
         Check and handle Linkedin captcha challenge.
         
