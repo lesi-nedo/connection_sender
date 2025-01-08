@@ -9,6 +9,8 @@ The file must have: `org_name` columns. The bot will stop when the daily set lim
 ## Features
 
 - Send connection requests to Linkedin users.
+- Find users from company/university inside `orgs.csv` file.
+- Each company/university can be selected once every 2 months.
 - Withdraw sent connection requests.
 - Handle Linkedin login, including captcha and email/phone verification.
 - Send email notifications for errors and connection limits.
