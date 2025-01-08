@@ -1,3 +1,4 @@
+from pathlib import Path
 import time
 import os
 import sys
@@ -27,6 +28,8 @@ from selenium_stealth import stealth
 from selenium.webdriver.common.action_chains import ActionChains, ActionBuilder
 from selenium.common.exceptions import TimeoutException, WebDriverException, StaleElementReferenceException
 from selenium.webdriver.remote.webdriver import WebDriver
+from webdriver_manager.chrome import ChromeDriverManager
+
 
 
 from random import randint
@@ -69,6 +72,7 @@ class Linkedin:
         logger.info("Options set")
         self.check_if_chromedriver_exists()
         service = webdriver.ChromeService(executable_path=os.getenv("CHROMEDRIVER_PATH"))
+        self.options.binary_location = self.chrome_exec_path
         try:
             self.driver = webdriver.Chrome(options=self.options, service=service)
         except Exception as e:
@@ -125,6 +129,11 @@ class Linkedin:
         if not os.path.exists(os.getenv("CHROMEDRIVER_PATH")):
             logger.error("Chromedriver does not exist")
             raise FileNotFoundError("Chromedriver does not exist")
+        path_ = os.getenv("CHROME_EXEC_PATH") or "/usr/bin/google-chrome"
+        if not os.path.exists(path_):
+            logger.error("Chrome does not exist")
+            raise FileNotFoundError("Chrome does not exist")
+        self.chrome_exec_path = path_
     
     def remove_orgs_chosen_from_dt(self):
         to_remove = datetime.now().day == 1 and datetime.now().month % 2 == 0
@@ -1334,6 +1343,7 @@ class Linkedin:
                                             self.driver.execute_script("arguments[0].click();", reached_limit_button)
 
                                         time.sleep(np.random.uniform(0.5, 1))
+                                        logger.info("Reached weekly connection limit")
                                         raise ReachedLimitException("Reached connection limit")
                                     except ReachedLimitException:
                                         raise
@@ -1347,6 +1357,7 @@ class Linkedin:
                         self.num_connections += 1
                         self.sent_connections_org.update({self.org_name: self.num_connections})
                         if self.num_connections >= self.max_requests_per_day:
+                            logger.info("Reached daily connection limit")
                             raise ReachedDailyLimitSetException("Reached daily connection limit")
 
                     except (ReachedLimitException, ReachedDailyLimitSetException) as e:

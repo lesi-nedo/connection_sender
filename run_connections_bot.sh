@@ -12,6 +12,8 @@ FILE_PATH_WEEK="weeks/reached_limit_week-${WEEK}.txt"
 set -e
 set -o pipefail
 
+source "$SCRIPT_DIR/.env"
+
 # Create logs directory if it doesn't exist
 if [ ! -d "$LOGS_DIR" ]; then
     mkdir -p "$LOGS_DIR"
@@ -57,6 +59,44 @@ check_virtual_env() {
     return 1
 }
 
+kill_chrome_processes() {
+    local chrome_pids
+    local driver_pid
+    set +e
+    # Find and kill headless Chrome processes
+    chrome_pids=$(ps aux | grep -E "chrome .* --headless=new .*" | grep -v grep | awk '{print $2}')
+    if [ -n "$chrome_pids" ]; then
+        log_message "Killing headless Chrome processes: $chrome_pids"
+        echo "$chrome_pids" | xargs kill -9 2>/dev/null
+    fi
+
+    
+    # Find and kill chromedriver
+    driver_pid=$(pgrep -f "chromedriver")
+    if [ -n "$driver_pid" ]; then
+        log_message "Killing chromedriver process: $driver_pid"
+        kill -9 "$driver_pid" 2>/dev/null
+    fi
+
+    
+    # Backup: use pkill for any remaining processes
+    pkill -f "chromedriver" 2>/dev/null
+    pkill -f "chrome.*--headless=new" 2>/dev/null
+    
+    # Check if any processes remain
+    if pgrep -f "chromedriver|chrome.*--headless=new" >/dev/null; then
+        log_message "Failed to kill all Chrome processes"
+        return 1
+    fi
+    
+    log_message "All Chrome processes terminated"
+    set -e
+    return 0
+}
+
+
+kill_chrome_processes
+
 # Usage in your script:
 if ! check_virtual_env "log_message"; then
     log_message "Please activate a virtual environment first"
@@ -81,19 +121,6 @@ if ! command -v Xvfb &> /dev/null; then
     exit 1
 fi
 
-CHROME_PATH="/usr/bin/google-chrome"
-
-# Add after initial checks, before cron setup:
-# Check Chrome installation
-if [ ! -f "$CHROME_PATH" ]; then
-    log_message "Error: Google Chrome not found at $CHROME_PATH"
-    log_message "Install with: 
-    wget https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
-    sudo apt-get install -y ./google-chrome-stable_current_amd64.deb"
-    exit 1
-fi
-
-source "$SCRIPT_DIR/.env"
 
 # Check for required environment variables
 if [ "$HEADLESS" != "True" ]; then
@@ -132,16 +159,20 @@ fi
 
 
 # Get current hour (0-23)
-CURRENT_HOUR=$(date +%H)
+CURRENT_HOUR="$(date +%H)"
+CURRENT_HOUR=$((10#$CURRENT_HOUR))
+
 
 # Calculate maximum possible offset
 MAX_HOUR=21
 HOURS_LEFT=$((MAX_HOUR - CURRENT_HOUR))
 
-if [ $HOURS_LEFT -le 0 ]; then
+
+if [ $HOURS_LEFT -lt 0 ]; then
     log_message "Current hour ($CURRENT_HOUR) is past the maximum allowed hour ($MAX_HOUR). Script will run tomorrow."
     exit 0
 fi
+
 
 # Generate random hour offset (0 to hours left)
 RANDOM_OFFSET=$((RANDOM % (HOURS_LEFT + 1)))
@@ -149,6 +180,8 @@ RANDOM_OFFSET=$((RANDOM % (HOURS_LEFT + 1)))
 # Calculate final random hour and minutes
 RANDOM_HOUR=$((CURRENT_HOUR + RANDOM_OFFSET))
 RANDOM_MINUTES=$((RANDOM % 60))
+RANDOM_MINUTES=$(printf "%02d" $RANDOM_MINUTES)
+
 
 # Create temporary cron file
 TEMP_CRON=$(mktemp)

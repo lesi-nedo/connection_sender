@@ -1,244 +1,438 @@
-# LinkedIn Connection Bot
+# Linkedin Bot
 
-An advanced LinkedIn automation bot that handles connection requests, connection withdrawals, and various security challenges using Selenium WebDriver.
+This project is a Linkedin bot that automates the process of sending connection requests, withdrawing sent requests using Selenium.
 
-## Key Features
+## Features
 
-- Send connection requests with smart paging and retry logic
-- Withdraw pending connection requests with configurable thresholds
-- Handle LinkedIn security features:
-  - Email verification codes
-  - Phone number verification
-  - CAPTCHA challenges
-  - Security checkpoints
-- Smart rate limiting and daily request caps
-- Automatic log rotation
-- Email notifications for events and errors
-- Human-like mouse movements and delays
-- Headless operation support
+- Send connection requests to Linkedin users.
+- Withdraw sent connection requests.
+- Handle Linkedin login, including captcha and email/phone verification.
+- Send email notifications for errors and connection limits.
 
-## Prerequisites
+## Setup
+
+### Prerequisites
 
 - Python 3.8+
 - Google Chrome
-- ChromeDriver (compatible with Chrome version)
-- Xvfb (for headless operation)
-- SMTP access (Gmail recommended)
-- IMAP access for email verification
+- ChromeDriver
+- Environment variables set up in a `.env` file
 
-## Installation
+### Installation
 
-1. Clone and setup virtual environment:
+1. Clone the repository:
 
-   ```bash
-   git clone https://github.com/yourusername/linkedin-bot.git
-   cd linkedin-bot
-   ```
+    ```bash
+    git clone https://github.com/yourusername/linkedin-bot.git
+    cd linkedin-bot
+    ```
+2. Download and Install 'google-chrome' stable package
 
-2. Install Google Chrome:
+    ```bash
+    wget https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
+    sudo apt-get install -y ./google-chrome-stable_current_amd64.deb
+    ```
+3. Check the version of the installed Google Chrome
 
-   ```bash
-   wget https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
-   sudo apt-get install -y ./google-chrome-stable_current_amd64.deb
-   ```
+    ```bash
+    google-chrome --version
+    ```
+4. Download the compatible ChromeDriver version from [here](https://googlechromelabs.github.io/chrome-for-testing/) and extract the file.
 
-3. Check the version of the installed Google Chrome:
+    ```bash
+    wget https://storage.googleapis.com/chrome-for-testing-public/{YOUR_IP}_/linux64/chromedriver-linux64.zip
+    unzip chromedriver-linux64.zip
+    cd chromedriver-linux64
+    sudo mv chromedriver /usr/local/bin/
+    ```
 
-   ```bash
-   google-chrome --version
-   ```
+5. Install virtual display for running chrome in headless mode
 
-4. Download the compatible ChromeDriver version from [here](https://googlechromelabs.github.io/chrome-for-testing/) and extract the file:
+    ```bash
+    sudo apt-get install -y xvfb
+    ```
+6. Install the required Python packages in a virtual environment:
 
-   ```bash
-   wget https://edgedl.me.gvt1.com/edgedl/chrome/chrome-for-testing/YOUR_VERSION_NUMBER/linux64/chromedriver-linux64.zip
-   unzip chromedriver-linux64.zip
-   sudo mv chromedriver-linux64/chromedriver /usr/local/bin/
-   ```
+    ```bash
+    pip install -r requirements.txt
+    ```
 
-5. Install a virtual display for running Chrome in headless mode:
+7. Create a `.env` file in the root directory with the following variables:
 
-   ```bash
-   sudo apt-get install -y xvfb
-   ```
+    ```env
+    LINKEDIN_PASS=your_linkedin_password
+    LINKEDIN_USER_MAIL=your_linkedin_email
+    LINKEDIN_MAILBOX_PASS=your_email_app_password
+    LINKEDIN_INBOX_FOLDER=INBOX
+    EMAIL_SERVER_HOST_LINKEDIN=outlook.office365.com  # or imap.gmail.com for Gmail
+    PHONE_NUMBER=your_phone_number
+    EMAIL_LINKEDIN_CODE=security-noreply@linkedin.com
+    
+    SENDER=your_notification_email
+    SENDER_INBOX_FOLDER=inbox
+    SENDER_PASS=your_notification_email_password
+    EMAIL_SERVER_HOST_SENDER=imap.gmail.com
+    SMTP_SERVER_SENDER=smtp.gmail.com
+    SMTP_PORT_SENDER=465
+    
+    RECEIVER=email_to_receive_notifications
+    
+    WAITING_BEFORE_CHECK=40
+    HEADLESS=True
+    MAX_REQUESTS_PER_DAY=24
+    MIN_REQUESTS_PER_DAY=15
+    MIN_CONNECTIONS_PENDING=300
+    TOTAL_SCROLL_TIMES=20
+    
+    CHROMEDRIVER_PATH=/usr/local/bin/chromedriver
+    BOT_VENV_NAME=linkedin
+    ```
 
-6. Create a Python virtual environment and activate it:
+## Executable Files Explanation
 
-   ```bash
-   python3 -m venv venv
-   source venv/bin/activate
-   ```
+### Main Connections Script (main_connections.py)
 
-7. Install the required Python packages:
+The `main_connections.py` script is the main entry point for sending connection requests. Here are its key components:
 
-   ```bash
-   pip install -r requirements.txt
-   ```
+#### Core Functionality
+- Initializes Linkedin bot instance with credentials
+- Manages environment variable loading
+- Handles main connection request flow
 
-8. Create a 
+#### Error Handling
+- Implements graceful shutdown on errors
+- Ensures browser cleanup on exit
+- Maintains detailed logging of execution
 
-.env
+#### Environment Integration
+- Uses dotenv for configuration loading
+- Validates required environment variables
+- Supports multiple environment types
 
- file in the root directory with the following variables:
+#### Process Flow
+1. Loads environment variables
+2. Initializes Linkedin bot with credentials
+3. Initiates connection request process
+4. Handles any exceptions during execution
+5. Ensures clean browser shutdown
+6. Logs execution status
 
-   ```env
-   # LinkedIn credentials
-   LINKEDIN_USER_MAIL=your_linkedin_email
-   LINKEDIN_PASS=your_linkedin_password
+#### Usage Example
+```bash
+# Direct execution
+python main_connections.py
+```
 
-   # Email settings for sending notifications
-   SENDER=your_email
-   SENDER_PASS=your_email_password
-   RECEIVER=receiver_email
-   SMTP_SERVER_SENDER=smtp.gmail.com
-   SMTP_PORT_SENDER=465
+### Main Withdraw Script (main_withdraw.py)
 
-   # Email server settings for LinkedIn verification code
-   EMAIL_SERVER_HOST_LINKEDIN=imap.gmail.com
-   LINKEDIN_MAILBOX_PASS=your_linkedin_email_password
-   LINKEDIN_INBOX_FOLDER=INBOX
-   EMAIL_LINKEDIN_CODE=security-noreply@linkedin.com
+The `main_withdraw.py` script handles the withdrawal of pending connection requests. Here are its key components:
 
-   # Other settings
-   WAITING_BEFORE_CHECK=40
-   HEADLESS=True
-   MAX_REQUESTS_PER_DAY=5
-   MIN_CONNECTIONS_PENDING=300
-   CHROMEDRIVER_PATH=/usr/local/bin/chromedriver
-   BOT_VENV_NAME=linkedin
-   ```
+#### Core Functionality
+- Initializes Linkedin bot instance with credentials
+- Manages automatic withdrawal of pending requests
+- Respects configured withdrawal limits and thresholds
 
-   **Note:** If using Gmail, you may need to generate an app password for `SENDER_PASS`. See [this guide](https://support.google.com/mail/answer/185833) for more information.
+#### Withdrawal Logic
+- Only processes withdrawals when pending connections exceed minimum threshold
+- Implements percentage-based withdrawal strategy
+- Maintains connection request hygiene
 
-### Usage
+#### Safety Features
+- Implements withdrawal rate limiting
+- Handles withdrawal confirmation dialogs
+- Prevents accidental mass withdrawals
+- Respects minimum connection thresholds
 
-1. Run the bot:
+#### Error Handling
+- Manages network connectivity issues
+- Handles session timeouts gracefully
+- Reports withdrawal limit exceptions
+- Ensures clean browser shutdown
 
-   ```bash
-   python main.py
-   ```
+#### Usage Example
+```bash
+python main_withdraw.py
+```
 
-2. The bot will start sending connection requests. If an error occurs, it will send an email notification and close the browser.
 
-### Customization
+### Bot Execution Script (run_connections_bot.sh)
 
-- Modify the `main.py` file to change the bot's behavior.
-- Adjust the settings in the 
+The `run_connections_bot.sh` script handles the actual bot execution with several key features:
 
-.env
+#### Virtual Display Management
 
- file to match your requirements.
+- Sets up Xvfb virtual display for headless operation
+- Configures display resolution to 1920x1080
+- Automatically cleans up previous Xvfb instances
 
-### Logging
+#### Process Management
 
-Logs are generated using the 
+- Terminates existing Chrome and ChromeDriver processes before starting
+- Implements graceful shutdown with trap handlers
+- Verifies process termination to prevent zombie processes
 
-logger
+#### Environment Handling
 
- module and can be found in the log files created in the project directory.
+- Supports multiple virtual environment types:
+  - Conda environments
+  - Python virtualenv
+  - Poetry environments
+  - Pipenv
+- Auto-detects active virtual environment
+- Validates Python interpreter availability
 
-### Cron Job Setup
+#### Execution Timing
 
-To automate the bot to run at specific intervals, you can set up a cron job using the 
+- Implements random execution delays
+- Restricts execution to before 9 PM (21:00)
+- Calculates optimal timing based on current hour
+- Adds random offset to avoid predictable patterns
 
-run_cron_job.sh
+#### Safety Checks
 
- script.
+- Verifies weekly limit hasn't been reached
+- Ensures all required directories exist
+- Validates environment variables
+- Checks for required system dependencies
+  - Python3
+  - Xvfb
+  - Chrome
+  - ChromeDriver
 
-1. Make the script executable:
+#### Logging
 
-   ```bash
-   chmod +x run_cron_job.sh
-   ```
+- Maintains detailed execution logs
+- Records start/end times
+- Captures environment information
+- Logs process IDs and cleanup operations
 
-2. Run the script:
+#### Error Handling
 
-   ```bash
-   ./run_cron_job.sh
-   ```
+- Implements error trapping for cleanup
+- Handles process termination signals
+- Reports detailed error messages
+- Maintains exit status codes
 
-This will set up a cron job to run the bot at 9:00 AM daily.
+#### Usage Example
+
+The script can be run directly or via cron:
+
+```bash
+# Direct execution
+./run_connections_bot.sh
+
+# Viewing logs
+tail -f logs/run_connections_bot.log
+```
+
+- Sets up a cron job to run the python script daily at random times between `current_time` and 9:59 PM
+
+### Cron Job Setup Script (run_cron_job.sh)
+
+The `run_cron_job.sh` script handles the initial setup and configuration of the bot's automated execution. Here are its key components:
+
+#### Directory Structure Setup
+- Creates required directories for logs and configuration
+- Sets up logrotate configuration directory
+- Establishes proper permissions and ownership
+
+#### Log Rotation Configuration
+- Creates logrotate configuration file
+- Sets monthly rotation schedule
+- Configures log compression
+- Sets maximum log size to 10MB
+- Preserves 2 rotations of log history
+
+#### Environment Management
+- Sources environment variables from `.env`
+- Verifies virtual environment configuration
+- Supports both Conda and standard Python virtual environments
+- Validates environment setup before proceeding
+
+#### Cron Job Configuration
+- Removes existing bot-related cron jobs
+- Configures two primary cron tasks:
+  1. Log rotation task (daily at midnight)
+  2. Bot execution task (daily at 7 AM)
+- Includes comprehensive logging of cron job execution
+- Captures environment details and Python configuration
+
+#### Virtual Environment Integration
+- Detects and uses the appropriate virtual environment
+- Supports multiple environment types:
+  - Conda environments
+  - Python virtualenv
+  - Poetry environments
+- Ensures correct Python interpreter selection
+
+#### Execution Verification
+- Validates cron job installation
+- Checks logrotate configuration
+- Verifies script permissions
+- Confirms environment accessibility
+
+#### Usage Example
+```bash
+# Make script executable
+chmod +x run_cron_job.sh
+
+# Run setup
+./run_cron_job.sh
+
+# Verify cron installation
+crontab -l
+```
+
+- Runs daily at 7:00 AM the `run_connections_bot.sh` script
+
+
+#### Usage Example
+```bash
+# Direct execution
+python main_withdraw.py
+
+# View withdrawal logs
+tail -f logs/linkedin.log
+```
 
 ### Troubleshooting
 
-- Ensure that all environment variables are correctly set in the 
+1. Chromedriver Issues
+   - Ensure Chrome and Chromedriver versions match
+   - Verify Chromedriver path in `.env`
+   - Check Chrome installation
 
-.env
+2. Email Authentication
+   - Verify email credentials in `.env`
+   - Enable less secure app access for Gmail
+   - Use app-specific passwords if 2FA is enabled
 
- file.
-- Make sure that ChromeDriver is compatible with your installed version of Google Chrome.
-- Check the log files for detailed error messages.
-- If you encounter login issues, verify that your LinkedIn credentials are correct and that your account is not locked.
+3. Connection Issues
+   - Check internet connection
+   - Verify LinkedIn credentials
+   - Ensure proxy settings if using one
 
-## Project Structure
+4. Cron Job Problems
+   - Check crontab entries: `crontab -l`
+   - Verify script permissions
+   - Check log files in `logs/` directory
+
+### Maintenance
+
+1. Log Rotation
+   - Logs are automatically rotated monthly
+   - Keeps 2 rotations
+   - Compresses old logs
+   - Maximum log size: 10MB
+
+2. Clean Up
+   - Old screenshots are automatically deleted
+   - Temporary files are removed after use
+   - Weekly/daily limit files are managed automatically
+
+### Security Considerations
+
+1. Credentials
+   - Store sensitive data in `.env` file
+   - Never commit credentials to version control
+   - Use environment variables for secrets
+
+2. Rate Limiting
+   - Respects LinkedIn's connection limits
+   - Implements random delays between actions
+   - Stops automatically when limits are reached
+
+3. Detection Prevention
+   - Uses stealth mode
+   - Implements human-like behavior
+   - Randomizes actions and delays
+
+## Usage
+
+### Manual Usage
+
+1. Make the script executable:
+    ```bash
+    chmod +x run_cron_job.sh
+    ```
+
+2. Run the setup script:
+    ```bash
+    ./run_cron_job.sh
+    ```
+
+This will:
+- Create necessary directories for logs
+- Set up log rotation
+- Configure and install a cron job to run daily at 7:00 AM
+- `run_cron_job.sh` cron job will execute the `run_connections_bot.sh` script
+- `run_connections_bot.sh` will set another cron job to run the bot daily at random times between the 7:00 AM and 9:59 PM
+- `run_connections_bot.sh` cron job will execute the `main_connections.py` script
+
+
+
+
+### Sending Connection/Withdrawing Requests Right Away
+1. For sending connection requests:
+    ```bash
+    python main_connections.py
+    ```
+
+2. For withdrawing pending connection requests:
+    ```bash
+    python main_withdraw.py
+    ```
+
+## Configuration
+
+### Connection Request Settings
+- `MAX_REQUESTS_PER_DAY`: Maximum number of connection requests per day (default: 24)
+- `MIN_REQUESTS_PER_DAY`: Minimum number of connection requests per day (default: 15)
+- `MIN_CONNECTIONS_PENDING`: Minimum number of pending connections before withdrawing (default: 300)
+
+### Bot Behavior
+- `WAITING_BEFORE_CHECK`: Time to wait between checks for the captcha email response in seconds (default: 40)
+- `HEADLESS`: Run Chrome in headless mode (default: True)
+- `TOTAL_SCROLL_TIMES`: Number of times to scroll through people search (default: 20). In companies/universities alumni/people section there is a scrollable page with profiles. This settings limits the total scroll down, which means the number of profiles explored in that company/university. 
+
+## Safety Features
+
+1. LinkedIn Connection Limits
+   - Respects LinkedIn's weekly connection request limits
+   - Automatically stops when reaching the limit
+   - Sends notification emails when limits are reached
+
+2. Security Handling
+   - Handles LinkedIn security checks
+   - Supports email verification codes
+   - Supports phone verification
+   - Handles CAPTCHA challenges with email notifications
+
+3. Error Recovery
+   - Automatically handles connection errors
+   - Retries failed operations with exponential backoff
+   - Sends error notification emails
+
+## Notifications
+
+The bot sends email notifications for:
+- CAPTCHA challenges that need manual intervention
+- Reaching connection request limits
+- Security verifications needed
+- Critical errors
+
+## Directory Structure
 
 ```
-├── .env
-├── conf_logrotate/
-├── days/
-├── exceptions/
-├── htmls/
-├── linkedin/
-├── logger/
-├── logs/
-├── main.py
-├── notebooks/
-├── org/
-├── README.md
-├── remote.sh
-├── requirements.txt
-├── run_connections_bot.sh
-├── run_cron_job.sh
-└── weeks/
+linkedin-bot/
+├── logs/                  # Log files
+├── htmls/                 # HTML snapshots for debugging
+├── weeks/                 # Weekly limit tracking
+├── days/                  # Daily limit tracking
+├── conf_logrotate/       # Log rotation configuration
+├── main_connections.py    # Connection requests script
+├── main_withdraw.py      # Connection withdrawal script
+├── run_cron_job.sh       # Cron job setup script
+├── run_connections_bot.sh # Bot execution script
+└── .env                  # Environment variables
 ```
-
-- **`main.py`**: Entry point of the bot.
-- **
-
-linkedin
-
-**: Contains the LinkedIn interaction logic.
-- **
-
-exceptions
-
-**: Custom exception classes.
-- **
-
-org
-
-**: Organization-related data and scripts.
-- **
-
-notebooks
-
-**: Jupyter notebooks for development and testing.
-- **
-
-logger
-
-**: Logging configurations.
-- **
-
-logs
-
-**: Log files generated by the bot.
-- **
-
-run_cron_job.sh
-
-**: Script to set up the cron job.
-- **
-
-requirements.txt
-
-**: Python dependencies.
-- **`.env`**: Environment variables file.
-
-## Contributing
-
-Feel free to submit issues or pull requests if you find any bugs or have suggestions for improvements.
-
-## License
-
-This project is licensed under the MIT License.

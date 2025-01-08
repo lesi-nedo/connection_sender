@@ -14,6 +14,7 @@ load_dotenv()
 
 if __name__ == "__main__":
     linkedin = Linkedin(os.getenv("LINKEDIN_USER_MAIL"), os.getenv("LINKEDIN_PASS"))
+
     try:
         linkedin.withdraw_connection()
 
@@ -27,3 +28,6 @@ if __name__ == "__main__":
         linkedin.send_error_email(str(e))
     finally:
         linkedin.close_browser()
+        linkedin.logger.info("Driver closed")
+        linkedin.logger.info("Exiting...")
+        exit(0) 
