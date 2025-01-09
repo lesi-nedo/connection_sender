@@ -37,6 +37,7 @@ The file must have: `org_name` columns. The bot will stop when the daily set lim
     ```bash
     wget https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
     sudo apt-get install -y ./google-chrome-stable_current_amd64.deb
+    rm google-chrome-stable_current_amd64.deb
     ```
 3. Check the version of the installed Google Chrome
 
@@ -56,6 +57,12 @@ The file must have: `org_name` columns. The bot will stop when the daily set lim
 
     ```bash
     sudo apt-get install -y xvfb
+    ```
+7. Create a virtual environment (I use conda):
+
+    ```bash
+    conda create -n linkedin python=3.12
+    conda activate linkedin
     ```
 6. Install the required Python packages in a virtual environment:
 
@@ -95,6 +102,16 @@ The file must have: `org_name` columns. The bot will stop when the daily set lim
     
     CHROMEDRIVER_PATH=/usr/local/bin/chromedriver
     BOT_VENV_NAME=linkedin
+    ```
+### Right Away Execution
+1. For sending connection requests:
+    ```bash
+    python main_connections.py
+    ```
+
+2. For withdrawing pending connection requests:
+    ```bash
+    python main_withdraw.py
     ```
 
 ## Executable Files Explanation
@@ -356,20 +373,6 @@ This will:
 - `run_cron_job.sh` cron job will execute the `run_connections_bot.sh` script
 - `run_connections_bot.sh` will set another cron job to run the bot daily at random times between the 7:00 AM and 9:59 PM
 - `run_connections_bot.sh` cron job will execute the `main_connections.py` script
-
-
-
-
-### Right Away Execution
-1. For sending connection requests:
-    ```bash
-    python main_connections.py
-    ```
-
-2. For withdrawing pending connection requests:
-    ```bash
-    python main_withdraw.py
-    ```
 
 ## Configuration
 
