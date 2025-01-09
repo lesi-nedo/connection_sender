@@ -89,6 +89,9 @@ The file must have: `org_name` columns. The bot will stop when the daily set lim
     MIN_REQUESTS_PER_DAY=15
     MIN_CONNECTIONS_PENDING=300
     TOTAL_SCROLL_TIMES=20
+    PAGES_BEFORE_QUIT=30
+    MAX_WEBDRIVER_WAIT_TIME=10
+    MIN_WEBDRIVER_WAIT_TIME=5
     
     CHROMEDRIVER_PATH=/usr/local/bin/chromedriver
     BOT_VENV_NAME=linkedin
@@ -378,7 +381,13 @@ This will:
 ### Bot Behavior
 - `WAITING_BEFORE_CHECK`: Time to wait between checks for the captcha email response in seconds (default: 40)
 - `HEADLESS`: Run Chrome in headless mode (default: True)
-- `TOTAL_SCROLL_TIMES`: Number of times to scroll through people search (default: 20). In companies/universities alumni/people section there is a scrollable page with profiles. This settings limits the total scroll down, which means the number of profiles explored in that company/university. 
+- `TOTAL_SCROLL_TIMES`: Number of times to scroll through people search (default: 20). In companies/universities alumni/people section there is a scrollable page with profiles. This settings limits the total scroll down, which means the number of profiles explored in that company/university.
+-  `PAGES_BEFORE_QUIT`: Number of pages to search for connectable people before quitting (default: 30)
+-  `MAX_WEBDRIVER_WAIT_TIME`: Maximum time to wait for a page element to load (default: 10). 
+-  `MIN_WEBDRIVER_WAIT_TIME`: Minimum time to wait for a page element to load (default: 5)
+   the final wait time is a random number between `MIN_WEBDRIVER_WAIT_TIME` and `MAX_WEBDRIVER_WAIT_TIME`. `WebDriverWait` function uses it.
+-  `CHROMEDRIVER_PATH`: Path to the ChromeDriver executable (default: /usr/local/bin/chromedriver)
+-  `BOT_VENV_NAME`: Name of the virtual environment (default: linkedin)
 
 ## Safety Features
 
