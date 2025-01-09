@@ -1,6 +1,10 @@
 import re
 import datetime
 import os
+import socket
+import requests
+from typing import List
+from time import sleep
 
 def extract_number_from_text(text: str, logger) -> int:
     try:
@@ -40,3 +44,37 @@ def remove_files_in_directory(directory):
         print(f"Error removing files in directory: {e}")
         return False
     return True
+
+
+def check_internet_connection(logger, retries: int = 3, timeout: int = 5) -> bool:
+    """
+    Check internet connectivity by testing connection to reliable hosts
+    """
+    hosts: List[str] = [
+        "linkedin.com",
+        "google.com", 
+        "1.1.1.1"  # Cloudflare DNS
+    ]
+    
+    for attempt in range(retries):
+        for host in hosts:
+            try:
+                # Try socket connection first (faster)
+                socket.create_connection((host, 80), timeout=timeout)
+                logger.info(f"Internet connection verified via {host}")
+                return True
+            except OSError:
+                try:
+                    # Fallback to HTTP request
+                    requests.get(f"http://{host}", timeout=timeout)
+                    logger.info(f"Internet connection verified via HTTP to {host}")
+                    return True
+                except requests.RequestException:
+                    continue
+        
+        if attempt < retries - 1:
+            logger.warning(f"Connection attempt {attempt + 1} failed, retrying...")
+            sleep(2)
+    
+    logger.error("No internet connection available")
+    return False

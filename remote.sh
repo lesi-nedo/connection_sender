@@ -13,6 +13,7 @@ source "$PWD/.env"
 
 if [ "$HEADLESS" = "False" ]; then
   echo "Firstly, set HEADLESS=True in .env file"
+  exit 1
 fi
 
 ITEMS_TO_TRANSFER=(
