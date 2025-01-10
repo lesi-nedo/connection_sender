@@ -580,7 +580,7 @@ class Linkedin:
             raise e
 
     def click_next_page(self, next_page_button, max_retries=3):
-
+        logger.info("Clicking next page button")
         for attempt in range(max_retries):
             try:
                 # Find and scroll to next button
@@ -595,7 +595,8 @@ class Linkedin:
                     EC.element_to_be_clickable((By.XPATH, next_page_button))
                 )
                 ActionChains(self.driver).click(next_button).perform()
-        
+                
+                logger.info("Clicked next page button")
                 time.sleep(np.random.uniform(2, 4))
                 return
             except Exception as e:
