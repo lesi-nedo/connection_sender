@@ -740,7 +740,17 @@ class Linkedin:
         except:
             return
         
-
+    def check_if_declinable(self):
+        try:
+            decline_button = "//button[@aria-label='Decline' and contains(., 'Decline')]"
+            decline_button = WebDriverWait(self.driver, self.get_web_driver_wait_time()).until(
+                EC.element_to_be_clickable((By.XPATH, decline_button))
+            )
+            logger.info("Decline button found, clicking.")
+            ActionChains(self.driver).click(decline_button).perform()
+            time.sleep(np.random.uniform(1, 3))
+        except:
+            return
     def check_if_app(self):
         h1_app_xpath = "//h1[contains(., 'Check your LinkedIn app')]"
         resend_button_xpath = "//button[contains(@class, 'form__submit__inapp') and contains(., 'Resend')]"
@@ -896,6 +906,7 @@ class Linkedin:
                 try:
                     self.check_if_captcha()
                     self.check_if_app()
+                    self.check_if_declinable()
                     try:
                         self.check_if_feed()
                     except:
