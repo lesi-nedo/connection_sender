@@ -717,7 +717,7 @@ class Linkedin:
             )
             input_checkbox = label.find_element(By.XPATH, input_xpath)
             if input_checkbox.is_selected():
-                self.logger.info("Remember me checkbox is selected")
+                self.logger.info("Remember me checkbox is unselected")
                 ActionChains(self.driver).click(label).perform()
         except:
             return
@@ -886,14 +886,15 @@ class Linkedin:
             try:
                 self.check_if_feed()
             except:
-                res = self.check_if_restricted()
                 self.check_if_need_waiting()
                 res = self.check_if_email_code()
                 if not res:
                     res = self.check_if_phone_number()
                 self.after_login_card()
+                res = self.check_if_restricted()
+
             
-            self.check_if_feed()
+                self.check_if_feed()
             
             # Wait for feed to verify successful login
             WebDriverWait(driver, 5).until(
@@ -1601,7 +1602,12 @@ class Linkedin:
             self.resolve_captcha()
             
             # Verify captcha is resolved
-            self.check_if_feed()
+            try:
+                self.check_if_feed()
+            except TimeoutException:
+                self.logger.warning("After captcha resolution, feed not found")
+                self.check_if_restricted()
+                return False
             self.logger.info("Captcha successfully resolved")
             return True
                 
