@@ -87,6 +87,7 @@ def retry_with_delay(max_retries=3, delay=5, raise_if_fail=Exception, error_msg=
 
         @wraps(func)
         def wrapper(self, *args, **kwargs):
+            local_error_msg = str(error_msg)
             logger = None
             last_exception = None
             if hasattr(self, 'logger'):
@@ -110,14 +111,14 @@ def retry_with_delay(max_retries=3, delay=5, raise_if_fail=Exception, error_msg=
                         logger.warning("No internet connection available, exiting...")
                     else:
                         try:
-                            self.driver.current_url
+                            _ = self.driver.current_url
                         except Exception as e:
                             logger.warning(f"Browser session expired")
                             self.close_browser()
                             raise WebSessionExpired("Browser session expired")
                     sleep(delay)
             if last_exception:
-                error_msg += f" Last exception: {str(last_exception)}"
-            raise raise_if_fail(f"Failed to execute after {max_retries} attempts. {error_msg}")
+                local_error_msg += f" Last exception: {str(last_exception)}"
+            raise raise_if_fail(f"Failed to execute after {max_retries} attempts. {local_error_msg}")
         return wrapper
     return decorator

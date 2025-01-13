@@ -637,7 +637,7 @@ class Linkedin:
         modal_overlay = "//div[contains(@class, 'artdeco-modal-overlay')]"
         last_page_but_xpath = "(//button[not(@disabled) and contains(@aria-label, 'Page ')])[last()]"
         limit_search_xpath = "//div[@data-view-name='search-results-promo' and contains(., 'You’ve reached the monthly limit for profile searches')]"
-        results_container =  "//div[contains(@class, 'search-results-container')]",
+        results_container =  "//div[contains(@class, 'search-results-container')]"
 
         self.logger.info("Checking if card with connectable people exists")
         self._helper_check_card(results_container)
@@ -1141,6 +1141,7 @@ class Linkedin:
             pass
         
         self.logger.info("Successfully navigated to alumni page")
+        return True
         
 
     @retry_with_delay(max_retries=3, delay=10, error_msg="Something went wrong in the `after_login_card` method")
@@ -1178,7 +1179,9 @@ class Linkedin:
                 
     @retry_with_delay(max_retries=10, delay=30, raise_if_fail=NoCardWithPeopleException, 
                         error_msg="Could not find card with people to connect")
-    def _helper_check_card(self, card_xpath):
+    def _helper_check_card(self, card_xpath:str):
+        if not isinstance(card_xpath, str):
+            raise ValueError("Xpath must be a string")
         element = WebDriverWait(self.driver, self.get_web_driver_wait_time()).until(
             EC.visibility_of_element_located((By.XPATH, card_xpath))
         )
@@ -1202,7 +1205,6 @@ class Linkedin:
         try:
             # Wait for either results or no results
             
-            max_retries = 10
             func_to_call = None
             try:
                 if self.reached_limit_search:
@@ -1393,6 +1395,7 @@ class Linkedin:
             )
             
         self.logger.info("Successfully sent connection limit notification email")
+        return True
             
     @retry_with_delay(max_retries=3, delay=10, error_msg="Failed to get last iframe", exceptions_to_raise=(UnexpectedException,)) 
     def get_last_iframe(
@@ -1550,7 +1553,8 @@ class Linkedin:
             'verify_button': "//button[contains(., 'Verify')]",
             'challenge_image': "//img[@id='game_challengeItem_image']"
         }
-        
+        original_frame = None
+
         try:
             # Check for captcha presence with dynamic wait
             waiter_timeout = self.get_web_driver_wait_time()
@@ -1566,7 +1570,6 @@ class Linkedin:
             
             # Store original frame context
             original_frame = self.driver.current_window_handle
-            
            
             # Navigate to deepest iframe containing captcha
             self.get_last_iframe(max_timeout=waiter_timeout)
@@ -1600,14 +1603,15 @@ class Linkedin:
             # Verify captcha is resolved
             self.check_if_feed()
             self.logger.info("Captcha successfully resolved")
-            return
+            return True
                 
                     
         finally:
             # Always restore original frame context
             try:
                 self.driver.switch_to.default_content()
-                self.driver.switch_to.window(original_frame)
+                if original_frame:
+                    self.driver.switch_to.window(original_frame)
             except Exception as e:
                 self.logger.error(f"Error restoring frame context: {str(e)}")
           
@@ -1824,6 +1828,7 @@ class Linkedin:
         finally:
             self.driver.switch_to.default_content()
 
+    @retry_with_delay(max_retries=3, delay=10, error_msg="Failed to save centered screenshot")
     def save_centered_screenshot(self, padding=250):
         try:
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
@@ -1889,7 +1894,7 @@ class Linkedin:
                     server.login(os.getenv("SENDER"), os.getenv("SENDER_PASS"))
                     server.sendmail(os.getenv("SENDER"), os.getenv("RECEIVER"), message.as_string())
                     self.logger.info("Successfully sent email")
-                    return True
+                return True
             finally:
                 os.remove(screenshot_path)
 
