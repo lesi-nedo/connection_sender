@@ -6,4 +6,4 @@ class CaptchaNeededException(Exception):
         self.message = message
     
     def __str__(self):
-        return f"{self.message}"
+        return f"CaptchaNeededException({self.message})"

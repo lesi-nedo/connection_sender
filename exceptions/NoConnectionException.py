@@ -5,4 +5,4 @@ class NoConnectionException(Exception):
         self.message = message
 
     def __str__(self):
-        return f"{self.message}"
+        return f"NoConnectionException({self.message})"

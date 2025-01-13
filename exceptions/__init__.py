@@ -10,6 +10,10 @@ from .AccountRestrictedException import AccountRestrictedException
 from .ReachedDailyLimitSetException import ReachedDailyLimitSetException
 from .ReachedWithdrawLimitException import ReachedWithdrawLimitException
 from .LastPageException import LastPageException
+from .WebSessionExpired import WebSessionExpired
+from .NoCardWithPeopleException import NoCardWithPeopleException
+
+
 __all__ = [
     'LoginException',
     'NoMoreConnectionException',
@@ -22,5 +26,7 @@ __all__ = [
     'AccountRestrictedException',
     'ReachedDailyLimitSetException',
     'ReachedWithdrawLimitException',
-    'LastPageException'
+    'LastPageException',
+    'WebSessionExpired',
+    'NoCardWithPeopleException'
 ]

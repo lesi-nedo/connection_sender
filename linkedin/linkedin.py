@@ -50,39 +50,42 @@ from exceptions import (
     LoginException, ReachedDailyLimitSetException, NoMoreOrgException,
     NoConnectionException, CaptchaNeededException, AccountRestrictedException,
     UnexpectedException, NoSendButtonException, ReachedLimitException, ReachedWithdrawLimitException,
-    LastPageException
+    LastPageException, WebSessionExpired, NoCardWithPeopleException
 )
-from .utils import extract_number_from_text, get_week_number, remove_files_in_directory, check_internet_connection
+from .utils import (
+    extract_number_from_text, get_week_number, remove_files_in_directory, check_internet_connection,
+    retry_with_delay
+)
 
 
 
-logger = setup_logger(__name__)
 cwd = os.getcwd()
 
 class Linkedin:
 
     def __init__(self, username, password):
-        logger.info(f"Current working directory: {cwd}")
+        self.logger = setup_logger("Linkedin", "linkedin.log")
+        self.logger.info(f"Current working directory: {cwd}")
 
         self.username = username
         self.password = password
         
         self.options = webdriver.ChromeOptions()
         self.options_set()
-        logger.info("Options set")
+        self.logger.info("Options set")
         self.chromedriver_path = None
         self.chrome_exec_path = None
         self.check_if_chromedriver_exists()
-        logger.info(f"Chrome exec path: {self.chrome_exec_path}")
-        logger.info(f"Chrome driver path: {self.chromedriver_path}")
+        self.logger.info(f"Chrome exec path: {self.chrome_exec_path}")
+        self.logger.info(f"Chrome driver path: {self.chromedriver_path}")
         service = webdriver.ChromeService(executable_path=self.chromedriver_path)
         self.options.binary_location = self.chrome_exec_path
         try:
             self.driver = webdriver.Chrome(options=self.options, service=service)
         except Exception as e:
-            logger.error(f"Error creating driver: {str(e)}")
+            self.logger.error(f"Error creating driver: {str(e)}")
             raise e
-        logger.info("Driver created")
+        self.logger.info("Driver created")
         stealth(self.driver,
             languages=["en-US", "en"],
             vendor="Google Inc.",
@@ -91,7 +94,7 @@ class Linkedin:
             renderer="Intel Iris OpenGL Engine",
             fix_hairline=True,
         )
-        logger.info("Stealth mode enabled")
+        self.logger.info("Stealth mode enabled")
         self.error_login_html = "error_login.html"
         self.num_page = 1
         self.total_pages = 1
@@ -105,7 +108,6 @@ class Linkedin:
         self.org_dt = pd.read_csv(self.orgs_path)
         self.withdraw_perc_per_page = 0.8
         self.home_page = "https://www.Linkedin.com/feed/"
-        self.logger = logger
         self.waiting_before_check = int(os.getenv("WAITING_BEFORE_CHECK"))
         self.waiting_before_code_retry = 57600
         self.waiting_to_back_home = 240
@@ -113,11 +115,10 @@ class Linkedin:
         self.min_connections_pending = int(os.getenv("MIN_CONNECTIONS_PENDING"))
         self.MIN_CONNECTION_WITHDRAWABLE = 3
         self.button_tot_withdrawable = "//button[@id='mn-invitation-manager__invitation-facet-pills--CONNECTION']"
-        self.sent_requests = 0
         self.filename_week = "reached_limit_week"
         self.filename_day = "reached_limit_day"
         self.file_extension = ".txt"
-        self.num_connections = 0
+        self.num_connections_sent = 0
         self.max_requests_per_day = np.random.randint(int(os.getenv("MIN_REQUESTS_PER_DAY")), int(os.getenv("MAX_REQUESTS_PER_DAY")))
         self.weeks_path = os.path.join(ROOT_DIR, "weeks")
         self.htmls_path = os.path.join(ROOT_DIR, "htmls")
@@ -154,7 +155,7 @@ class Linkedin:
             if chrome_driver_version:
                 self.chromedriver_path = str(Path.home() / ".cache" / "selenium" / "chromedriver" / chrome_driver_version / "chromedriver")
             else:    
-                logger.error("Chromedriver does not exist")
+                self.logger.error("Chromedriver does not exist")
                 raise FileNotFoundError("Chromedriver does not exist")
         else:
             self.chromedriver_path = os.getenv("CHROMEDRIVER_PATH")
@@ -182,7 +183,7 @@ class Linkedin:
                     if base_dir.exists():
                         self.chrome_exec_path = str(base_dir / "chrome")
                     return
-            logger.error(f"HERE {chrome_driver_version}")
+            self.logger.error(f"HERE {chrome_driver_version}")
             raise FileNotFoundError("Chrome does not exist")
         self.chrome_exec_path = path_
     
@@ -192,16 +193,16 @@ class Linkedin:
         if not os.path.exists(self.orgs_chosen_month_path):
             self.org_chose_dt = pd.DataFrame(columns=['org_name'])
             self.org_chose_dt.to_csv(self.orgs_chosen_month_path, index=False)
-            logger.info("Orgs chosen last 2 months csv file does not exist. Created new one.")
+            self.logger.info("Orgs chosen last 2 months csv file does not exist. Created new one.")
             return
 
         if to_remove:
             os.remove(self.orgs_chosen_month_path)
-            logger.info("First day of the even month. Time to remove orgs chosen last 2 months csv file.")
+            self.logger.info("First day of the even month. Time to remove orgs chosen last 2 months csv file.")
             self.org_chose_dt = pd.DataFrame(columns=['org_name'])
             self.org_chose_dt.to_csv(self.orgs_chosen_month_path, index=False)
         else:
-            logger.info("Removing orgs already chosen")
+            self.logger.info("Removing orgs already chosen")
             self.org_chose_dt = pd.read_csv(self.orgs_chosen_month_path)
             self.org_dt = self.org_dt[~self.org_dt['org_name'].isin(self.org_chose_dt['org_name'])].reset_index(drop=True)
 
@@ -242,7 +243,7 @@ class Linkedin:
         self.options.add_argument('--disable-setuid-sandbox')
         
         user_agent = random.choice(list_users)
-        logger.info(f"User agent: {user_agent}")
+        self.logger.info(f"User agent: {user_agent}")
         self.options.add_argument(f"user-agent={user_agent}")
         self.options.add_argument("--incognito")
         self.options.add_argument("--nogpu")
@@ -257,7 +258,7 @@ class Linkedin:
         match = re.search(r"(\w+)\/", filename)
         folder = match.group(1)
         if os.path.exists(filename):
-            logger.info(f"This week limit reached. File exists: {self.filename_week}")
+            self.logger.info(f"This week limit reached. File exists: {self.filename_week}")
             return True
         else:
             files = glob.glob(f"{folder}/*")
@@ -265,59 +266,59 @@ class Linkedin:
                 try:
                     os.remove(f)
                 except OSError as e:
-                    logger.error(f"Error: {e.filename} - {e.strerror}")
+                    self.logger.error(f"Error: {e.filename} - {e.strerror}")
                     raise e
         return False
 
-    def send_connection_request(self):
+    def send_connection_request(self, max_recursion=3):
         week_number = get_week_number()
         filename_week_comp = os.path.join(self.weeks_path, f"reached_limit_week-{week_number}{self.file_extension}")
         today = datetime.now().strftime('%a')
         # check if file exists
 
         if self.check_if_exists_delete_rest(filename_week_comp):
-            logger.info("Week limit reached")
+            self.logger.info("Week limit reached")
             return
         remove_files_in_directory(self.weeks_path)
         filename_day_comp = os.path.join(self.days_path, f"{self.filename_day}-{today}{self.file_extension}")
         if self.check_if_exists_delete_rest(filename_day_comp):
-            logger.info("Day limit reached")
+            self.logger.info("Day limit reached")
             return
         remove_files_in_directory(self.days_path)
         try:
             self.login()
         except Exception as e:
-            logger.error(f"Failed to login: {str(e)}")
+            self.logger.error(f"Failed to login: {str(e)}")
             raise e
         self.remove_orgs_chosen_from_dt()
-        logger.info(f"Today will send {self.max_requests_per_day} connection requests")
+        self.logger.info(f"Today will send {self.max_requests_per_day} connection requests")
         MAX_TRIES = 1000
         curr_try = 0
         try:
             while curr_try < MAX_TRIES:
                 curr_try += 1
                 if curr_try == MAX_TRIES:
-                    logger.error("This should not happen. Reached max tries")
+                    self.logger.error("This should not happen. Reached max tries")
                     self.send_error_email("The bot has a bug. Contact the developer. Include the log file.")
                     return
                 try:
                     self.org_name = self.get_org(self.org_dt)
 
                     if self.reached_limit_search:
-                        logger.info("Searching for organization people with reached limit")
+                        self.logger.info("Searching for organization people with reached limit")
                         result = self.search_org_limit(self.org_name)
                     else:
-                        logger.info("Searching for organization people with no reached limit")
+                        self.logger.info("Searching for organization people with no reached limit")
                         result = self.search_org_no_limit(self.org_name)
-                    logger.info(f"Result: {result}")
+                    self.logger.info(f"Did we reached the limit in searching for connectable people? {not result}")
                     if result:
                         self.connect_to_alumni()
                 except NoMoreOrgException as e:
-                    logger.info("No more organizations to search")
+                    self.logger.info("No more organizations to search")
                     self.send_limit_reached_email("No more organizations to search")
                     return
                 except NoConnectionException as e:
-                    logger.info("No more alumni to connect")
+                    self.logger.info("No more alumni to connect")
                     self.return_home()
                     continue
                 except ReachedLimitException as e:
@@ -327,27 +328,36 @@ class Linkedin:
                     return
                 except ReachedDailyLimitSetException as e:
                     if today == "Sun":
-                        logger.info("Reached daily limit set, but it's Sunday. Will continue to send connections.")
+                        self.logger.info("Reached daily limit set, but it's Sunday. Will continue to send connections.")
+                        self.max_requests_per_day = 100
+                        self.num_connections_sent = 0
                         continue
                     with open(filename_day_comp, "w") as f:
                         f.write("Reached limit")
                     self.send_limit_reached_email("Reached daily limit set. Will continue tomorrow.")
                     return
+                
+                except WebSessionExpired as e:
+                    self.logger.warning(f"{{send_connection_request}}: {str(e)}. Restarting...")
+                    if max_recursion == 0:
+                        self.send_error_email(f"Reached max recursion in send_connection_request, error: WebSessionExpired - {str(e)}")
+                        return
+                    self.send_connection_request(max_recursion=max_recursion-1)
                 except:
                     raise
         except Exception as e:
-            self.logger.error(f"Error sending connection request: {e}")
+            self.self.logger.error(f"Error sending connection request: {e}")
             self.send_error_email(str(e))
             raise
         finally:
             if self.sent_connections_org.get(self.org_name, None):
                     new_row = pd.DataFrame({'org_name': [self.org_name]})
                     self.org_chose_dt = pd.concat([self.org_chose_dt, new_row], ignore_index=True)
-                    logger.info(f"Added {self.org_name} to orgs chosen this month")
+                    self.logger.info(f"Added {self.org_name} to orgs chosen this month")
                     self.org_chose_dt.to_csv(self.orgs_chosen_month_path, index=False)
 
     
-
+    @retry_with_delay(max_retries=3, delay=60, error_msg="Could not send error email")
     def send_error_email(self, error: str, max_retries: int = 3):
         """
         Sends email notification when an error occurs in the Linkedin bot.
@@ -359,89 +369,73 @@ class Linkedin:
             Exception: If email sending fails
         """
 
-        for attempt in range(max_retries):
-            try:
-                message = MIMEMultipart()
-                message["From"] = os.getenv("SENDER")
-                message["To"] = os.getenv("RECEIVER")
-                message["Subject"] = "Linkedin Bot - Error Report"
+        message = MIMEMultipart()
+        message["From"] = os.getenv("SENDER")
+        message["To"] = os.getenv("RECEIVER")
+        message["Subject"] = "Linkedin Bot - Error Report"
 
-                # Create detailed error message
-                body = f"""
-                Linkedin Bot encountered an error and stopped working.
+        # Create detailed error message
+        body = f"""
+        Linkedin Bot encountered an error and stopped working.
 
-                Error details:
-                -------------
-                Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-                Error: {error}
-                
-                Please check the bot and restart if necessary.
-                """
-                
-                message.attach(MIMEText(body, "plain"))
+        Error details:
+        -------------
+        Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+        Error: {error}
+        
+        Please check the bot and restart if necessary.
+        """
+        
+        message.attach(MIMEText(body, "plain"))
 
-                # Try to attach screenshot if available
-                try:
-                    screenshot_path = self.save_centered_screenshot()
-                    if screenshot_path:
-                        with open(screenshot_path, 'rb') as f:
-                            img_data = f.read()
-                            image = MIMEImage(img_data, name=os.path.basename(screenshot_path))
-                            message.attach(image)
-                except Exception as e:
-                    logger.warning(f"Could not attach screenshot: {str(e)}")
+        # Try to attach screenshot if available
+        try:
+            screenshot_path = self.save_centered_screenshot()
+            if screenshot_path:
+                with open(screenshot_path, 'rb') as f:
+                    img_data = f.read()
+                    image = MIMEImage(img_data, name=os.path.basename(screenshot_path))
+                    message.attach(image)
+        except Exception as e:
+            self.logger.warning(f"Could not attach screenshot: {str(e)}")
 
-                # Send email using SSL
-                with smtplib.SMTP_SSL(os.getenv("SMTP_SERVER_SENDER"), os.getenv("SMTP_PORT_SENDER")) as server:
-                    server.login(os.getenv("SENDER"), os.getenv("SENDER_PASS"))
-                    server.sendmail(
-                        os.getenv("SENDER"),
-                        os.getenv("RECEIVER"), 
-                        message.as_string()
-                    )
-                    
-                logger.info("Successfully sent error notification email")
-                return
-                
-            except Exception as e:
-                if attempt < max_retries - 1:
-                    result = check_internet_connection(logger, retries=3, timeout=5)
-                    
-                    if not result:
-                        logger.error("No internet connection available")
-                        time.sleep(60)
-                    else:
-                        logger.error(f"Failed with this error: {str(e)}. Retrying ({attempt})...")
-                        time.sleep(5)
-                    continue
-                else:
-                    logger.error(f"Failed to send error email: {str(e)}")
-                    raise
+        # Send email using SSL
+        with smtplib.SMTP_SSL(os.getenv("SMTP_SERVER_SENDER"), os.getenv("SMTP_PORT_SENDER")) as server:
+            server.login(os.getenv("SENDER"), os.getenv("SENDER_PASS"))
+            server.sendmail(
+                os.getenv("SENDER"),
+                os.getenv("RECEIVER"), 
+                message.as_string()
+            )
+            
+        self.logger.info("Successfully sent error notification email")
+        return
+            
     
     def get_number_withdrawable(self, button_xpath):
         button = self.driver.find_element(By.XPATH, button_xpath)
         span = button.find_element(By.XPATH, ".//span")
         span_text = span.text
-        num_connections_sent = extract_number_from_text(span_text, logger)
-        return num_connections_sent
+        num_connections_pending = extract_number_from_text(span_text, self.logger)
+        return num_connections_pending
             
     def withdraw_connection(self):
         url = "https://www.Linkedin.com/mynetwork/invitation-manager/sent/"
         self.login()
         self.driver.get(url)
         time.sleep(np.random.randint(3, 5))
-        num_connections_sent = self.get_number_withdrawable(self.button_tot_withdrawable)   
+        num_connections_pending = self.get_number_withdrawable(self.button_tot_withdrawable)   
         withdraw_button = "//button[contains(., 'Withdraw')]"
 
-        if num_connections_sent < self.min_connections_pending:
-            logger.info("Number of connections pending is less than minimum connections pending")
+        if num_connections_pending < self.min_connections_pending:
+            self.logger.info("Number of connections pending is less than minimum connections pending")
             return
 
-        for all_withdraw_buttons in self.withdraw_conn_generator(withdraw_button, num_connections_sent):
+        for all_withdraw_buttons in self.withdraw_conn_generator(withdraw_button, num_connections_pending):
             array_len = len(all_withdraw_buttons)
 
             if array_len <= self.MIN_CONNECTION_WITHDRAWABLE:
-                logger.info(f"Less than {self.MIN_CONNECTION_WITHDRAWABLE} connections to withdraw per page.")
+                self.logger.info(f"Less than {self.MIN_CONNECTION_WITHDRAWABLE} connections to withdraw per page.")
                 continue
             num_elemnts = int( array_len* self.withdraw_perc_per_page)
             indeces = np.random.choice(array_len, num_elemnts, replace=False)
@@ -472,10 +466,10 @@ class Linkedin:
                     time.sleep(np.random.randint(1.5, 3.5))
                     
                 except Exception as e:
-                    logger.error(f"Error in withdraw: {str(e)}")
+                    self.logger.error(f"Error in withdraw: {str(e)}")
                     self.write_response(self.driver.page_source, "error_withdraw.html")
                     continue
-        logger.info("All connections withdrawn")
+        self.logger.info("All connections withdrawn")
 
     def withdraw_conn_generator(self, button_xpath, starting_withdrawable):
         """
@@ -491,19 +485,19 @@ class Linkedin:
             try:
                 
                 next_page_button = WebDriverWait(self.driver, self.get_web_driver_wait_time()).until(
-                    EC.presence_of_element_located((By.XPATH, next_page_button_xpath))
+                    EC.visibility_of_element_located((By.XPATH, next_page_button_xpath))
                 )
                 self.driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});", next_page_button)
 
                 last_page_button = WebDriverWait(self.driver, self.get_web_driver_wait_time()).until(
-                    EC.presence_of_element_located((By.XPATH, last_page_but_xpath))
+                    EC.visibility_of_element_located((By.XPATH, last_page_but_xpath))
                 )
                 last_page = int(last_page_button.text)
-                logger.info(f"Found {last_page} pages")
+                self.logger.info(f"Found {last_page} pages")
                 ActionChains(self.driver).click(last_page_button).perform()
                 # Click last page
             except Exception as e:
-                logger.warning(f"Error finding last page button. This should not happen. ({str(e)})")
+                self.logger.warning(f"Error finding last page button. This should not happen. ({str(e)})")
                 raise e
 
             curr_page = last_page
@@ -525,7 +519,7 @@ class Linkedin:
                         except StaleElementReferenceException:
                             continue
 
-                    logger.info(f"Found {len(visible_buttons)} withdraw buttons")
+                    self.logger.info(f"Found {len(visible_buttons)} withdraw buttons")
                     time.sleep(np.random.uniform(1, 3))
                     
                     if visible_buttons:
@@ -542,17 +536,17 @@ class Linkedin:
                         )
                         ActionChains(self.driver).click(previous_button).perform()
                     except:
-                        logger.info("Reached first page")
+                        self.logger.info("Reached first page")
                         return
 
                     curr_page -= 1
                     if curr_page == 0:
-                        logger.info("Reached first page")
+                        self.logger.info("Reached first page")
                         return
 
                     # Wait for page transition
                     next_page_button =  WebDriverWait(self.driver, self.get_web_driver_wait_time()).until(
-                        EC.presence_of_element_located((By.XPATH, next_page_button_xpath))
+                        EC.visibility_of_element_located((By.XPATH, next_page_button_xpath))
                     )
                     self.driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});", next_page_button)
                     time.sleep(np.random.uniform(2, 5))
@@ -562,57 +556,44 @@ class Linkedin:
                         self.button_tot_withdrawable
                     )
                     if curr_num_withdrawable == 0:
-                        logger.info("No more connections to withdraw")
+                        self.logger.info("No more connections to withdraw")
                         return
                     
                     if curr_num_withdrawable < int(starting_withdrawable * self.perc_to_withdraw):
-                        logger.info(f"Withdrew {self.perc_to_withdraw*100}% connections")
+                        self.logger.info(f"Withdrew {self.perc_to_withdraw*100}% connections")
                         raise ReachedWithdrawLimitException("Reached withdraw limit: {self.perc_to_withdraw*100}%")
 
                 except StaleElementReferenceException:
-                    logger.warning("Stale elements encountered, retrying page...")
+                    self.logger.warning("Stale elements encountered, retrying page...")
                     self.driver.refresh()
                     time.sleep(2)
                     continue
 
         except Exception as e:
-            logger.error(f"Error in withdraw generator: {str(e)}")
+            self.logger.error(f"Error in withdraw generator: {str(e)}")
             raise e
 
+    @retry_with_delay(max_retries=3, delay=10, error_msg="Could not click next page button")
     def click_next_page(self, next_page_button, max_retries=3):
-        logger.info("Clicking next page button")
-        for attempt in range(max_retries):
-            try:
-                # Find and scroll to next button
-                next_button = WebDriverWait(self.driver, self.get_web_driver_wait_time()).until(
-                    EC.presence_of_element_located((By.XPATH, next_page_button))
-                )
-                self.driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});", next_button)
-                time.sleep(np.random.uniform(0.5, 1.5))
-                
-            
-                next_button = WebDriverWait(self.driver, self.get_web_driver_wait_time()).until(
-                    EC.element_to_be_clickable((By.XPATH, next_page_button))
-                )
-                ActionChains(self.driver).click(next_button).perform()
-                
-                logger.info("Clicked next page button")
-                time.sleep(np.random.uniform(2, 4))
-                return
-            except Exception as e:
-                if attempt < max_retries - 1:
-                    result = check_internet_connection(logger, retries=3, timeout=5)
-
-                    if not result:
-                        logger.error("No internet connection available")
-                        time.sleep(60)
-                    else:
-                        logger.error(f"Failed with this error: {str(e)}. Retrying ({attempt})...")
-                        time.sleep(5)
-                    continue
-                else:
-                    logger.error(f"Failed to click next page button: {str(e)}")
-                    raise
+        self.logger.info("Clicking next page button")
+          
+        # Find and scroll to next button
+        next_button = WebDriverWait(self.driver, self.get_web_driver_wait_time()).until(
+            EC.visibility_of_element_located((By.XPATH, next_page_button))
+        )
+        self.driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});", next_button)
+        time.sleep(np.random.uniform(0.5, 1.5))
+        
+    
+        next_button = WebDriverWait(self.driver, self.get_web_driver_wait_time()).until(
+            EC.element_to_be_clickable((By.XPATH, next_page_button))
+        )
+        ActionChains(self.driver).click(next_button).perform()
+        
+        self.logger.info("Clicked next page button")
+        time.sleep(np.random.uniform(2, 4))
+        return
+    
             
         
 
@@ -625,14 +606,10 @@ class Linkedin:
     def generator_when_limit(self, button_xpath):
         people_card_xpath = "//div//h2[contains(., 'People you may know')]"
     
+        self.logger.info(f"Checking if 'People you may know' card exists")
+        self._helper_check_card(people_card_xpath)
 
-        try:
-            card_people = WebDriverWait(self.driver, self.get_web_driver_wait_time()).until(
-                EC.presence_of_element_located((By.XPATH, people_card_xpath))
-            )
-        except:
-            logger.info("No people card found in `generator_when_limit`")
-            raise UnexpectedException("No people card found in `generator_when_limit`")
+        card_people = self.driver.find_element(By.XPATH, people_card_xpath)
         
         self.driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});", card_people)
         time.sleep(np.random.uniform(2, 4))
@@ -644,13 +621,13 @@ class Linkedin:
                 )
                 yield all_buttons
             except Exception as e:
-                logger.info(f"No found buttons on the scroll: {scroll}")
+                self.logger.info(f"No found buttons on the scroll: {scroll}")
                 self.driver.execute_script("window.scrollTo({top: document.body.scrollHeight, left:0, behavior: 'smooth'});")
                 time.sleep(np.random.uniform(2, 4))
 
 
             if self.is_page_scrolled_to_end():
-                logger.info("Reached end of page")
+                self.logger.info("Reached end of page")
                 return
             
         
@@ -660,13 +637,17 @@ class Linkedin:
         modal_overlay = "//div[contains(@class, 'artdeco-modal-overlay')]"
         last_page_but_xpath = "(//button[not(@disabled) and contains(@aria-label, 'Page ')])[last()]"
         limit_search_xpath = "//div[@data-view-name='search-results-promo' and contains(., 'You’ve reached the monthly limit for profile searches')]"
+        results_container =  "//div[contains(@class, 'search-results-container')]",
+
+        self.logger.info("Checking if card with connectable people exists")
+        self._helper_check_card(results_container)
 
         try:
             last_page_button = WebDriverWait(self.driver, self.get_web_driver_wait_time()).until(
                 EC.element_to_be_clickable((By.XPATH, last_page_but_xpath))
             )
             last_page = int(last_page_button.text)
-            logger.info(f"Found {last_page} pages")
+            self.logger.info(f"Found {last_page} pages")
         except:
             last_page = 1
         pages_before_quit = int(os.getenv("PAGES_BEFORE_QUIT"))
@@ -680,9 +661,9 @@ class Linkedin:
 
                 try:
                     WebDriverWait(self.driver, self.get_web_driver_wait_time()).until(
-                        EC.presence_of_element_located((By.XPATH, limit_search_xpath))
+                        EC.visibility_of_element_located((By.XPATH, limit_search_xpath))
                     )
-                    logger.info("Reached monthly limit for profile searches")
+                    self.logger.info("Reached monthly limit for profile searches")
                     self.reached_limit_search = True
                 except:
                     pass
@@ -696,7 +677,7 @@ class Linkedin:
                     # Check and handle any modal overlays first
                     try:
                         overlay = WebDriverWait(self.driver, self.get_web_driver_wait_time()).until(
-                            EC.presence_of_element_located((By.XPATH, modal_overlay))
+                            EC.visibility_of_element_located((By.XPATH, modal_overlay))
                         )
                         # Wait for overlay to disappear or close it
                         try:
@@ -716,13 +697,13 @@ class Linkedin:
                     self.click_next_page(next_page_button)
                     
                 except:
-                    logger.info("No next page button found")
+                    self.logger.info("No next page button found")
                     raise LastPageException("No next page button found")
             except LastPageException:
                 raise
                         
             except Exception as e:
-                logger.info(f"No found buttons: {button_xpath} on page: {page}")
+                self.logger.info(f"No found buttons: {button_xpath} on page: {page}")
                 self.click_next_page(next_page_button)
                 
         return
@@ -732,11 +713,11 @@ class Linkedin:
 
         try:
             label = WebDriverWait(self.driver, self.get_web_driver_wait_time()).until(
-                EC.presence_of_element_located((By.XPATH, checkbox_xpath))
+                EC.visibility_of_element_located((By.XPATH, checkbox_xpath))
             )
             input_checkbox = label.find_element(By.XPATH, input_xpath)
             if input_checkbox.is_selected():
-                logger.info("Remember me checkbox is selected")
+                self.logger.info("Remember me checkbox is selected")
                 ActionChains(self.driver).click(label).perform()
         except:
             return
@@ -747,7 +728,7 @@ class Linkedin:
             decline_button = WebDriverWait(self.driver, self.get_web_driver_wait_time()).until(
                 EC.element_to_be_clickable((By.XPATH, decline_button))
             )
-            logger.info("Decline button found, clicking.")
+            self.logger.info("Decline button found, clicking.")
             ActionChains(self.driver).click(decline_button).perform()
             time.sleep(np.random.uniform(1, 3))
         except:
@@ -758,12 +739,15 @@ class Linkedin:
 
         try:
             WebDriverWait(self.driver, self.get_web_driver_wait_time()).until(
-                EC.presence_of_element_located((By.XPATH, h1_app_xpath))
+                EC.visibility_of_element_located((By.XPATH, h1_app_xpath))
             )
-            logger.warning("Authorization needed by LinkedIn app")
+            self.logger.warning("Authorization needed by LinkedIn app")
             while True:
                 self.send_email("Authorization needed by LinkedIn app. Resend the request: [Yes/No]? (If not correct will assume no.)", "Linkedin Bot - Authorization Needed")
                 message = self.waiting_for_confirmation_email()
+                if not message:
+                    self.logger.info("No email found for confirmation with app")
+                    break
                 match =re.search(r"Yes", message, re.IGNORECASE)
                 if match:
                     resend_button = WebDriverWait(self.driver, self.get_web_driver_wait_time()).until(
@@ -783,66 +767,58 @@ class Linkedin:
             start_post_button = "//button[contains(@class, 'artdeco-button')]//strong[contains(., 'Start a post')]"
 
             WebDriverWait(self.driver, self.get_web_driver_wait_time()).until(
-                    EC.presence_of_element_located((By.XPATH, start_post_button))
+                    EC.visibility_of_element_located((By.XPATH, start_post_button))
                 )
         except Exception as e:
             raise e
 
-    def handle_cookie_popup(self, max_retries=3):
+    @retry_with_delay(max_retries=3, delay=10, error_msg="Something went wrong in the cookie handling method")
+    def handle_cookie_popup(self):
         cookie_button_selectors = [
             "//button[contains(., 'Reject')]",
             "//button[@aria-label='Reject cookies']",
             "//button[contains(@class, 'cookie-reject')]"
         ]
-        
-        for attempt in range(max_retries):
+       
+        for selector in cookie_button_selectors:
             try:
-                # Try each selector
-                for selector in cookie_button_selectors:
-                    try:
-                        # Wait for button
-                        cookie_button = WebDriverWait(self.driver, self.get_web_driver_wait_time()).until(
-                            EC.element_to_be_clickable((By.XPATH, selector))
-                        )
-                        
-                        # Scroll into view if needed
-                        self.driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});", cookie_button)
-                        time.sleep(np.random.uniform(0.3, 0.7))
-                        
-                        # Simulate human behavior
-                        # self.human_like_mouse_move(cookie_button)
-                        
-                        ActionChains(self.driver).click(cookie_button).perform()
-                        
-                        # Verify popup is gone
-                        WebDriverWait(self.driver, self.get_web_driver_wait_time()).until_not(
-                            EC.presence_of_element_located((By.XPATH, selector))
-                        )
-                        
-                        logger.info(f"Successfully handled cookie popup with selector: {selector}")
-                        return True
-                        
-                    except TimeoutException:
-                        continue
-                        
-                logger.info("No cookie popup found with any selector")
-                return False
+                # Wait for button
+                cookie_button = WebDriverWait(self.driver, self.get_web_driver_wait_time()).until(
+                    EC.element_to_be_clickable((By.XPATH, selector))
+                )
                 
-            except Exception as e:
-                logger.error(f"Attempt {attempt + 1} failed to handle cookie popup: {str(e)}")
-                if attempt < max_retries - 1:
-                    time.sleep(np.random.uniform(1, 2))
-                else:
-                    return False
+                # Scroll into view if needed
+                self.driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});", cookie_button)
+                time.sleep(np.random.uniform(0.3, 0.7))
+                
+                # Simulate human behavior
+                # self.human_like_mouse_move(cookie_button)
+                
+                ActionChains(self.driver).click(cookie_button).perform()
+                
+                # Verify popup is gone
+                WebDriverWait(self.driver, self.get_web_driver_wait_time()).until_not(
+                    EC.visibility_of_element_located((By.XPATH, selector))
+                )
+                
+                self.logger.info(f"Successfully handled cookie popup with selector: {selector}")
+                return True
+                
+            except TimeoutException:
+                continue
+                
+        self.logger.info("No cookie popup found with any selector")
+        return False
+                
 
     def check_if_restricted(self):
         temporary_restricted_button = "//a[@role='button' and contains(@class, 'id__verify-btn__primary')]"
 
         try:
             WebDriverWait(self.driver, self.get_web_driver_wait_time()).until(
-                EC.presence_of_element_located((By.XPATH, temporary_restricted_button))
+                EC.visibility_of_element_located((By.XPATH, temporary_restricted_button))
             )
-            logger.warning("Access to account restricted")
+            self.logger.warning("Access to account restricted")
             raise AccountRestrictedException("Access to account restricted")
         except AccountRestrictedException:
             raise
@@ -854,103 +830,84 @@ class Linkedin:
 
         try:
             WebDriverWait(self.driver, self.get_web_driver_wait_time()).until(
-                EC.presence_of_element_located((By.XPATH, h2_msg))
+                EC.visibility_of_element_located((By.XPATH, h2_msg))
             )
-            logger.info(f"Found: 'Your LinkedIn Network Will Be Back Soon' message. Lets wait for: {self.waiting_to_back_home//60} minutes")
+            self.logger.info(f"Found: 'Your LinkedIn Network Will Be Back Soon' message. Lets wait for: {self.waiting_to_back_home//60} minutes")
             time.sleep(self.waiting_to_back_home)
             self.driver.refresh()
         except:
             return False
-            
-    def login(self, max_retries=3):
-        for attempt in range(max_retries):
+    @retry_with_delay(max_retries=3, delay=15, raise_if_fail=LoginException, 
+                      error_msg="Failed to login", exceptions_to_raise=(AccountRestrictedException,LoginException,)) 
+    def login(self):
+        driver = self.driver
+        driver.get("https://www.Linkedin.com/login")
+        
+        # Wait for page load
+        WebDriverWait(driver, 5).until(
+            EC.visibility_of_element_located((By.ID, "username"))
+        )
+        
+        self.handle_cookie_popup()
+        time.sleep(np.random.uniform(1, 2))
+        self.check_if_remember_me()
+        time.sleep(np.random.uniform(0.5, 1.5))
+        self.logger.info("Got Linkedin login page")
+        
+        # Get login elements
+        username_element = driver.find_element(By.ID, "username")
+        password_element = driver.find_element(By.ID, "password")
+        
+        # Simulate human behavior
+        # self.human_like_mouse_move(username_element)
+        for char in self.username:
+            username_element.send_keys(char)
+            time.sleep(np.random.uniform(0.1, 0.3))
+        time.sleep(np.random.uniform(0.5, 1.5))
+        
+        # self.human_like_mouse_move(password_element)
+        for char in self.password:
+            password_element.send_keys(char)
+            time.sleep(np.random.uniform(0.1, 0.3))
+        
+        self.logger.info("Filled credentials")
+        
+        # Click login button instead of hitting enter
+        submit_button = driver.find_element(By.CSS_SELECTOR, "button[type='submit']")
+        self.human_like_mouse_move(submit_button)
+        ActionChains(self.driver).click(submit_button).perform()
+        time.sleep(np.random.uniform(1, 2))
+        
+        # Verify login success
+        try:
+            self.check_if_captcha()
+            self.check_if_app()
+            self.check_if_declinable()
             try:
-                driver = self.driver
-                driver.get("https://www.Linkedin.com/login")
-                
-                # Wait for page load
-                WebDriverWait(driver, 5).until(
-                    EC.presence_of_element_located((By.ID, "username"))
-                )
-                
-                self.handle_cookie_popup()
-                time.sleep(np.random.uniform(1, 2))
-                self.check_if_remember_me()
-                time.sleep(np.random.uniform(0.5, 1.5))
-                logger.info("Got Linkedin login page")
-                
-                # Get login elements
-                username_element = driver.find_element(By.ID, "username")
-                password_element = driver.find_element(By.ID, "password")
-                
-                # Simulate human behavior
-                # self.human_like_mouse_move(username_element)
-                for char in self.username:
-                    username_element.send_keys(char)
-                    time.sleep(np.random.uniform(0.1, 0.3))
-                time.sleep(np.random.uniform(0.5, 1.5))
-                
-                # self.human_like_mouse_move(password_element)
-                for char in self.password:
-                    password_element.send_keys(char)
-                    time.sleep(np.random.uniform(0.1, 0.3))
-                
-                logger.info("Filled credentials")
-                
-                # Click login button instead of hitting enter
-                submit_button = driver.find_element(By.CSS_SELECTOR, "button[type='submit']")
-                self.human_like_mouse_move(submit_button)
-                ActionChains(self.driver).click(submit_button).perform()
-                time.sleep(np.random.uniform(1, 2))
-                
-                # Verify login success
-                try:
-                    self.check_if_captcha()
-                    self.check_if_app()
-                    self.check_if_declinable()
-                    try:
-                        self.check_if_feed()
-                    except:
-                        res = self.check_if_restricted()
-                        self.check_if_need_waiting()
-                        res = self.check_if_email_code()
-                        if not res:
-                            res = self.check_if_phone_number()
-                        self.after_login_card()
-                    
-                    self.check_if_feed()
-                    
-                    # Wait for feed to verify successful login
-                    WebDriverWait(driver, 5).until(
-                        EC.presence_of_element_located((By.ID, "global-nav"))
-                    )
-                    
-                    logger.info("Successfully logged in")
-                    return True
-                except AccountRestrictedException:
-                    raise
-                except Exception as e:
-                    if "security verification" in driver.page_source.lower():
-                        logger.error("Security verification required")
-                        self.write_response(driver.page_source, "security_verification.html")
-                    raise
-            except AccountRestrictedException:
-                raise
-            except Exception as e:
-                logger.error(f"Login attempt {attempt + 1} failed: {e.msg}")
-                self.write_response(driver.page_source, f"login_error_{attempt}.html")
-                self.check_if_restricted() 
-                if attempt < max_retries - 1:
-                    logger.info(f"Retrying login... ({attempt + 2}/{max_retries})")
-                    time.sleep(np.random.randint(30, 60))  # Wait before retry
-                    continue
-                else:
-                    raise LoginException(f"Failed to login after {max_retries} attempts") from e
-                    
-            finally:
-                if "Sign In" in driver.title:
-                    logger.error("Still on login page")
-                    raise LoginException("Failed to login")
+                self.check_if_feed()
+            except:
+                res = self.check_if_restricted()
+                self.check_if_need_waiting()
+                res = self.check_if_email_code()
+                if not res:
+                    res = self.check_if_phone_number()
+                self.after_login_card()
+            
+            self.check_if_feed()
+            
+            # Wait for feed to verify successful login
+            WebDriverWait(driver, 5).until(
+                EC.visibility_of_element_located((By.ID, "global-nav"))
+            )
+            
+            self.logger.info("Successfully logged in")
+            return True
+        except AccountRestrictedException:
+            raise
+        finally:
+            if "Sign In" in driver.title:
+                self.logger.error("Still on login page")
+                raise LoginException("Failed to login")
         
 
 
@@ -969,7 +926,7 @@ class Linkedin:
         org = org_dt.iloc[indx]['org_name']
         org_dt.drop(indx, inplace=True, errors='ignore')
         org_dt = org_dt.reset_index(drop=True)
-        logger.info(f"Selected organization: {org}")
+        self.logger.info(f"Selected organization: {org}")
 
         return org
 
@@ -983,14 +940,14 @@ class Linkedin:
         try:
             # Wait for suggestions container
             WebDriverWait(self.driver, self.get_web_driver_wait_time()).until(
-                EC.presence_of_element_located((By.XPATH, div_xpath))
+                EC.visibility_of_element_located((By.XPATH, div_xpath))
             )
             
             # Get all suggestions
             suggestions = WebDriverWait(self.driver, self.get_web_driver_wait_time()).until(
                 EC.visibility_of_any_elements_located((By.XPATH, suggestion_xpath))
             )
-            logger.info(f"Found {len(suggestions)} search suggestions")
+            self.logger.info(f"Found {len(suggestions)} search suggestions")
 
             if not suggestions:
                 raise NoMoreOrgException("No search suggestions found")
@@ -1010,11 +967,11 @@ class Linkedin:
                     continue
 
             # If no Company/School found, choose random suggestion
-            logger.info(f"No Company/School found, using random index")
+            self.logger.info(f"No Company/School found, using random index")
             return random.choice(valid_indices)
 
         except TimeoutException:
-            logger.info("No search suggestions found")
+            self.logger.info("No search suggestions found")
             raise NoMoreOrgException("Search suggestions not found")
         
     def _search_common(self, org_name):
@@ -1056,26 +1013,26 @@ class Linkedin:
             try:
                 # Relocate element for each character to avoid stale reference
                 search_element = WebDriverWait(self.driver, self.get_web_driver_wait_time()).until(
-                    EC.presence_of_element_located((By.CSS_SELECTOR, selectors['search_input']))
+                    EC.visibility_of_element_located((By.CSS_SELECTOR, selectors['search_input']))
                 )
                 search_element.send_keys(char)
                 time.sleep(np.random.uniform(0.1, 0.3))
             except:
                 # If element becomes stale, find it again
                 search_element = WebDriverWait(self.driver, self.get_web_driver_wait_time()).until(
-                    EC.presence_of_element_located((By.CSS_SELECTOR, selectors['search_input']))
+                    EC.visibility_of_element_located((By.CSS_SELECTOR, selectors['search_input']))
                 )
                 search_element.send_keys(char)
                 
         time.sleep(np.random.uniform(0.5, 2))
         try:
             num_presses = self.choose_result()
-            logger.info(f"Pressing down {num_presses} times")
+            self.logger.info(f"Pressing down {num_presses} times")
             for _ in range(num_presses):
                 search_element.send_keys(Keys.DOWN)
                 time.sleep(np.random.uniform(0.5, 1.3))
         except NoMoreOrgException as e:
-            logger.info("No more organizations to search")
+            self.logger.info("No more organizations to search")
             return False
         search_element.send_keys(Keys.RETURN)
         time.sleep(np.random.uniform(1, 2))
@@ -1084,12 +1041,12 @@ class Linkedin:
         company_button = WebDriverWait(self.driver, self.get_web_driver_wait_time()).until(
             EC.element_to_be_clickable((By.XPATH, selectors['company_button']))
         )
-        logger.info("Found search results")
+        self.logger.info("Found search results")
         
         ActionChains(self.driver).click(company_button).perform()
         try:
             WebDriverWait(self.driver, self.get_web_driver_wait_time()).until(
-                EC.presence_of_element_located((By.XPATH, selectors['no_found_company']))
+                EC.visibility_of_element_located((By.XPATH, selectors['no_found_company']))
             )
             return False
         except TimeoutException:
@@ -1106,52 +1063,42 @@ class Linkedin:
         return True
             
        
-        
-    def search_org_limit(self, org_name, max_retries=3):
+    @retry_with_delay(max_retries=3, delay=10, error_msg="Could not search organization with limit reached")  
+    def search_org_limit(self, org_name,):
         selectors ={
             'people_tab': "//nav[@aria-label='Organization’s page navigation']//a[contains(., 'People')]",
             'alumni_tab': "//nav[@aria-label='Organization’s page navigation']//a[contains(., 'Alumni')]",
         }
-        for attempt in range(max_retries):
+
+        result = self._search_common(org_name)
+        if not result:
+            return False
+
+        # Try people tab first, then alumni
+        try:
+            people_tab = WebDriverWait(self.driver, self.get_web_driver_wait_time()).until(
+                EC.element_to_be_clickable((By.XPATH, selectors['people_tab']))
+            )
+            # self.human_like_mouse_move(people_tab)
+            ActionChains(self.driver).click(people_tab).perform()
+
+        except:
             try:
-                result = self._search_common(org_name)
-                if not result:
-                    return False
+                alumni_tab = WebDriverWait(self.driver, self.get_web_driver_wait_time()).until(
+                    EC.element_to_be_clickable((By.XPATH, selectors['alumni_tab']))
+                )
+                # self.human_like_mouse_move(alumni_tab)
+                ActionChains(self.driver).click(alumni_tab).perform()
+            except TimeoutException:
+                self.logger.warning(f"Neither people nor alumni tab found: {org_name} ")
+                self.write_response(self.driver.page_source, "error_tabs_with_limit.html")
+                return False
+        self.logger.info("Successfully navigated to people/alumni page")
+        return True
+            
 
-                # Try people tab first, then alumni
-                try:
-                    people_tab = WebDriverWait(self.driver, self.get_web_driver_wait_time()).until(
-                        EC.element_to_be_clickable((By.XPATH, selectors['people_tab']))
-                    )
-                    # self.human_like_mouse_move(people_tab)
-                    ActionChains(self.driver).click(people_tab).perform()
-
-                except:
-                    try:
-                        alumni_tab = WebDriverWait(self.driver, self.get_web_driver_wait_time()).until(
-                            EC.element_to_be_clickable((By.XPATH, selectors['alumni_tab']))
-                        )
-                        # self.human_like_mouse_move(alumni_tab)
-                        ActionChains(self.driver).click(alumni_tab).perform()
-                    except TimeoutException:
-                        logger.warning(f"Neither people nor alumni tab found: {org_name} ")
-                        self.write_response(self.driver.page_source, "error_tabs_with_limit.html")
-                        return False
-                logger.info("Successfully navigated to people/alumni page")
-                return True
-            except Exception as e:
-                logger.error(f"Attempt {attempt + 1} failed in search : {str(e)}")
-                self.write_response(self.driver.page_source, f"error_search_org_{attempt}.html")
-                
-                self.return_home()
-                if attempt < max_retries - 1:
-                    logger.info(f"Retrying... ({attempt + 2}/{max_retries})")
-                    time.sleep(np.random.randint(5, 10))
-                else:
-                    raise
-
-
-    def search_org_no_limit(self, org_name, max_retries=3):
+    @retry_with_delay(max_retries=3, delay=10, error_msg="Could not search organization")
+    def search_org_no_limit(self, org_name):
         selectors = {
             
             'alumni_tab': "//div[@class='inline-block']//span[contains(., 'alumni')]",
@@ -1160,106 +1107,87 @@ class Linkedin:
             'connection_3rd': "//ul[contains(@class, 'inline-flex')]/li/button[contains(., '3rd')]"
         }
         
-        for attempt in range(max_retries):
+        result = self._search_common(org_name)
+        if not result:
+            return False                
+        # Try alumni tab first, then employees
+        try:
+            alumni_tab = WebDriverWait(self.driver, self.get_web_driver_wait_time()).until(
+                EC.element_to_be_clickable((By.XPATH, selectors['alumni_tab']))
+            )
+            # self.human_like_mouse_move(alumni_tab)
+            ActionChains(self.driver).click(alumni_tab).perform()
+        except TimeoutException:
             try:
-                result = self._search_common(org_name)
-                if not result:
-                    return False                
-                # Try alumni tab first, then employees
-                try:
-                    alumni_tab = WebDriverWait(self.driver, self.get_web_driver_wait_time()).until(
-                        EC.element_to_be_clickable((By.XPATH, selectors['alumni_tab']))
-                    )
-                    # self.human_like_mouse_move(alumni_tab)
-                    ActionChains(self.driver).click(alumni_tab).perform()
-                except TimeoutException:
-                    try:
-                        employees_tab = WebDriverWait(self.driver, self.get_web_driver_wait_time()).until(
-                            EC.element_to_be_clickable((By.XPATH, selectors['employees_tab']))
-                        )
-                        # self.human_like_mouse_move(employees_tab)
-                        ActionChains(self.driver).click(employees_tab).perform()
-                    except TimeoutException:
-                        logger.warning(f"Neither alumni nor employees tab found: {org_name} ")
-                        self.write_response(self.driver.page_source, "error_tabs_no_limit.html")
-                        return False
-                try:
-                    # Select connection levels
-                    for connection in ['connection_2nd', 'connection_3rd']:
-                        button = WebDriverWait(self.driver, self.get_web_driver_wait_time()).until(
-                            EC.element_to_be_clickable((By.XPATH, selectors[connection]))
-                        )
-                        # self.human_like_mouse_move(button)
-                        ActionChains(self.driver).click(button).perform()
-                        time.sleep(np.random.uniform(1, 2))
-                except:
-                    pass
-                
-                logger.info("Successfully navigated to alumni page")
-                return True
-                
-            except Exception as e:
-                logger.error(f"Attempt {attempt + 1} failed in search : {str(e)}")
-                self.write_response(self.driver.page_source, f"error_search_org_{attempt}.html")
-                
-                self.return_home()
-                if attempt < max_retries - 1:
-                    logger.info(f"Retrying... ({attempt + 2}/{max_retries})")
-                    time.sleep(np.random.randint(5, 10))
-                else:
-                    raise
+                employees_tab = WebDriverWait(self.driver, self.get_web_driver_wait_time()).until(
+                    EC.element_to_be_clickable((By.XPATH, selectors['employees_tab']))
+                )
+                # self.human_like_mouse_move(employees_tab)
+                ActionChains(self.driver).click(employees_tab).perform()
+            except TimeoutException:
+                self.logger.warning(f"Neither alumni nor employees tab found: {org_name} ")
+                self.write_response(self.driver.page_source, "error_tabs_no_limit.html")
+                return False
+        try:
+            # Select connection levels
+            for connection in ['connection_2nd', 'connection_3rd']:
+                button = WebDriverWait(self.driver, self.get_web_driver_wait_time()).until(
+                    EC.element_to_be_clickable((By.XPATH, selectors[connection]))
+                )
+                # self.human_like_mouse_move(button)
+                ActionChains(self.driver).click(button).perform()
+                time.sleep(np.random.uniform(1, 2))
+        except:
+            pass
+        
+        self.logger.info("Successfully navigated to alumni page")
+        
 
-    def after_login_card(self, max_retries=3):
+    @retry_with_delay(max_retries=3, delay=10, error_msg="Something went wrong in the `after_login_card` method")
+    def after_login_card(self):
         card_div_xpath = "//div[contains(@class, 'connect-services-card')]"
         button_xpath = "//button[@aria-label='Connect none']"
 
-        for attempt in range(max_retries):
-            try:
-                # Wait for card to appear
-                card = WebDriverWait(self.driver, np.random.randint(3, 6)).until(
-                    EC.presence_of_element_located((By.XPATH, card_div_xpath))
-                )
-                logger.info("Found connect services card")
+        try:
+            # Wait for card to appear
+            WebDriverWait(self.driver, np.random.randint(3, 6)).until(
+                EC.visibility_of_element_located((By.XPATH, card_div_xpath))
+            )
+            self.logger.info("Found connect services card")
+            
+            # Wait for button to be clickable
+            button = WebDriverWait(self.driver, self.get_web_driver_wait_time()).until(
+                EC.element_to_be_clickable((By.XPATH, button_xpath))
+            )
+            
+            # Simulate human behavior
+            # self.human_like_mouse_move(button)
+            
+            ActionChains(self.driver).click(button).perform()
+            
+            # Verify card disappeared
+            WebDriverWait(self.driver, self.get_web_driver_wait_time()).until(
+                EC.invisibility_of_element_located((By.XPATH, card_div_xpath))
+            )
+            self.logger.info("Successfully handled connect services card")
+            return True
+            
+        except TimeoutException:
+            self.logger.info("No connect services card found")
+            return False
                 
-                # Wait for button to be clickable
-                button = WebDriverWait(self.driver, self.get_web_driver_wait_time()).until(
-                    EC.element_to_be_clickable((By.XPATH, button_xpath))
-                )
-                
-                # Simulate human behavior
-                # self.human_like_mouse_move(button)
-                
-                # Try JavaScript click if regular click fails
-                ActionChains(self.driver).click(button).perform()
-                
-                # Verify card disappeared
-                WebDriverWait(self.driver, self.get_web_driver_wait_time()).until(
-                    EC.invisibility_of_element_located((By.XPATH, card_div_xpath))
-                )
-                logger.info("Successfully handled connect services card")
-                return True
-                
-            except TimeoutException:
-                logger.info("No connect services card found")
-                return False
-                
-            except Exception as e:
-                logger.error(f"Attempt {attempt + 1} failed to handle card: {str(e)}")
-                self.write_response(self.driver.page_source, f"error_card_{attempt}.html")
-                
-                if attempt < max_retries - 1:
-                    logger.info(f"Retrying... ({attempt + 2}/{max_retries})")
-                    time.sleep(np.random.randint(2, 4))
-                else:
-                    logger.error("Failed to handle connect services card")
-                    return False  
-        
+    @retry_with_delay(max_retries=10, delay=30, raise_if_fail=NoCardWithPeopleException, 
+                        error_msg="Could not find card with people to connect")
+    def _helper_check_card(self, card_xpath):
+        element = WebDriverWait(self.driver, self.get_web_driver_wait_time()).until(
+            EC.visibility_of_element_located((By.XPATH, card_xpath))
+        )
+        return element
 
     def connect_to_alumni(self):
         selectors = {
             'connect_button': "//button[contains(@aria-label, 'Invite') and span[contains(., 'Connect')]]",
             'no_results': "//div[contains(@class, 'search-reusable-search-no-results ')]/section/h2[contains(.,'No results found')]",
-            'results_container': "//div[contains(@class, 'search-results-container')]",
             'button_send1': "//button[contains(@aria-label, 'Send invitation')]",
             'button_send2': "//button[contains(@aria-label, 'Send without a note')]",
             'dismiss_button': "//button[@aria-label='Dismiss']",
@@ -1274,41 +1202,39 @@ class Linkedin:
         try:
             # Wait for either results or no results
             
-
+            max_retries = 10
             func_to_call = None
             try:
                 if self.reached_limit_search:
+                    self.logger.info("Setting {generator_when_limit} as function to call")
                     func_to_call = partial(self.generator_when_limit, selectors['connect_button'])
                 else:
                     WebDriverWait(self.driver, self.get_web_driver_wait_time()).until(
-                        EC.presence_of_element_located((By.XPATH, selectors['limit_search_xpath']))
+                        EC.visibility_of_element_located((By.XPATH, selectors['limit_search_xpath']))
                     )
                     self.reached_limit_search = True
-                    raise UnexpectedException("Reached limit search but not set")
+                    self.logger.info("Reached monthly limit for profile searches")
+                    return
             except:
                 try:
                     WebDriverWait(self.driver, self.get_web_driver_wait_time()).until(
-                        EC.presence_of_element_located((By.XPATH, selectors['no_results']))
+                        EC.visibility_of_element_located((By.XPATH, selectors['no_results']))
                     )
-                    logger.info("No connectable people found")
+                    self.logger.info("No connectable people found")
                     raise NoConnectionException("No connectable people found")
                 except:
                     pass
-            
-                # Wait for results container to be fully loaded
-                WebDriverWait(self.driver, self.get_web_driver_wait_time()).until(
-                    EC.presence_of_element_located((By.XPATH, selectors['results_container']))
-                )
-                logger.info("Found connectable people")
-                # Add random delay to simulate human behavior
-                time.sleep(np.random.uniform(1, 2))
-                func_to_call = partial(self.generator_pages, selectors['connect_button'])
 
+                self.logger.info("Setting {self.generator_pages} as function to call")
+                # Add random delay to simulate human behavior
+                func_to_call = partial(self.generator_pages, selectors['connect_button'])
+            
+            time.sleep(np.random.uniform(1, 2))
             # Get all connectable alumni
-            logger.info("Getting connectable alumni")
+            self.logger.info("Getting connectable alumni")
             for all_connect_buttons in func_to_call():
                 connection_len = len(all_connect_buttons)
-                logger.info(f"Found {connection_len} connectable alumni")
+                self.logger.info(f"Found {connection_len} connectable alumni")
                 
                 if connection_len > 6:
                     num_elements = int(connection_len * 0.5)
@@ -1345,12 +1271,12 @@ class Linkedin:
                                     toast_element = WebDriverWait(self.driver, self.get_web_driver_wait_time()).until(
                                         EC.visibility_of_element_located((By.XPATH, toast_xpath))
                                     )
-                                    logger.info(f"Error toast message found: {toast_element.text}")
+                                    self.logger.info(f"Error toast message found: {toast_element.text}")
                                 except TimeoutException:
-                                    logger.info("No error toast message found, will continue")
+                                    self.logger.info("No error toast message found, will continue")
                                     continue
                                 except Exception as e:
-                                    logger.error(f"Error in toast message: {str(e)}")
+                                    self.logger.error(f"Error in toast message: {str(e)}")
                                     raise NoSendButtonException("No send button found")
                         self.driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});", clickable_button)
                         ActionChains(self.driver).click(clickable_button).perform()
@@ -1360,31 +1286,31 @@ class Linkedin:
                             dismiss_button = WebDriverWait(self.driver, self.get_web_driver_wait_time()).until(
                                 EC.element_to_be_clickable((By.XPATH, selectors['dismiss_button']))
                             )
-                            logger.info("Found dismiss button, clicking it")
+                            self.logger.info("Found dismiss button, clicking it")
                             ActionChains(self.driver).click(dismiss_button).perform()
 
                             time.sleep(np.random.uniform(0.5, 1))
                         except TimeoutException:
-                            logger.debug("No dismiss button found")
+                            self.logger.debug("No dismiss button found")
                             pass
 
                         try:
                             WebDriverWait(self.driver, self.get_web_driver_wait_time()).until(
-                                EC.presence_of_element_located((By.XPATH, selectors['popup_box']))
+                                EC.visibility_of_element_located((By.XPATH, selectors['popup_box']))
                             )
 
                             try:
                                 growing_popup = WebDriverWait(self.driver, self.get_web_driver_wait_time()).until(
                                     EC.element_to_be_clickable((By.XPATH, selectors['growing_popup']))
                                 )
-                                logger.info("Found growing network message popup")
+                                self.logger.info("Found growing network message popup")
                                 ActionChains(self.driver).click(growing_popup).perform()
                             except TimeoutException as e:
                                 try:
                                     close_to_reach_limit_button = WebDriverWait(self.driver, self.get_web_driver_wait_time()).until(
                                         EC.element_to_be_clickable((By.XPATH, selectors['close_to_reach_limit_button']))
                                     )
-                                    logger.info("Found close to reach limit button, clicking it")
+                                    self.logger.info("Found close to reach limit button, clicking it")
                                     ActionChains(self.driver).click(close_to_reach_limit_button).perform()
 
                                 except TimeoutException as e:
@@ -1392,13 +1318,13 @@ class Linkedin:
                                         reached_limit_button = WebDriverWait(self.driver, self.get_web_driver_wait_time()).until(
                                             EC.element_to_be_clickable((By.XPATH, selectors['reached_limit_button']))
                                         )
-                                        logger.info("Found reached limit button, clicking it")
+                                        self.logger.info("Found reached limit button, clicking it")
                                         self.write_response(self.driver.page_source, "reached_limit.html")
 
                                         ActionChains(self.driver).click(reached_limit_button).perform()
 
                                         time.sleep(np.random.uniform(0.5, 1))
-                                        logger.info("Reached weekly connection limit")
+                                        self.logger.info("Reached weekly connection limit")
                                         raise ReachedLimitException("Reached connection limit")
                                     except ReachedLimitException:
                                         raise
@@ -1408,27 +1334,27 @@ class Linkedin:
                             pass
                         time.sleep(np.random.uniform(1, 2))
     
-                        logger.info(f"Successfully connected to alumni")
-                        self.num_connections += 1
-                        self.sent_connections_org.update({self.org_name: self.num_connections})
-                        if self.num_connections >= self.max_requests_per_day:
-                            logger.info("Reached daily connection limit")
+                        self.logger.info(f"Successfully connected to alumni")
+                        self.num_connections_sent += 1
+                        self.sent_connections_org.update({self.org_name: self.num_connections_sent})
+                        if self.num_connections_sent >= self.max_requests_per_day:
+                            self.logger.info("Reached daily connection limit")
                             raise ReachedDailyLimitSetException("Reached daily connection limit")
 
                     except (ReachedLimitException, ReachedDailyLimitSetException) as e:
                         raise
                     except Exception as e:
-                        logger.warning(f"Error in connect_to_alumni: {str(e)}")
+                        self.logger.warning(f"Error in connect_to_alumni: {str(e)}")
                         self.write_response(self.driver.page_source, "error_connect.html")
                         continue
 
         except (ReachedLimitException, ReachedDailyLimitSetException, NoConnectionException) as e:
             raise e
         except LastPageException:
-            logger.info("Reached last page")
+            self.logger.info("Reached last page")
             return
         except Exception as e:
-            logger.error(f"Attempt failed in connect_to_alumni: {str(e)}")
+            self.logger.error(f"Attempt failed in connect_to_alumni: {str(e)}")
             self.write_response(self.driver.page_source, f"error_get_connectable_alumni.html")
 
 
@@ -1436,43 +1362,39 @@ class Linkedin:
         with open(os.path.join(ROOT_DIR, self.htmls_path, name), "w") as file:
             file.write(response)
 
-
+    @retry_with_delay(max_retries=3, delay=10, error_msg="Could not send limit reached email")
     def send_limit_reached_email(self, string_to_write: str = "Linkedin Bot has stopped working because the weekly connection request limit has been reached."):
         """
         Sends email notification when Linkedin connection request limit is reached.
         """
-        try:
-            message = MIMEMultipart()
-            message["From"] = os.getenv("SENDER")
-            message["To"] = os.getenv("RECEIVER")
-            message["Subject"] = "Linkedin Bot - Connection Limit Reached"
+        message = MIMEMultipart()
+        message["From"] = os.getenv("SENDER")
+        message["To"] = os.getenv("RECEIVER")
+        message["Subject"] = "Linkedin Bot - Connection Limit Reached"
 
-            body = f"""
-            {string_to_write}
+        body = f"""
+        {string_to_write}
+        
+        The bot will now close.
+
+        -----------------------------
+        Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+
+        """            
+        message.attach(MIMEText(body, "plain"))
+
+        # Send email using SSL
+        with smtplib.SMTP_SSL(os.getenv("SMTP_SERVER_SENDER"), os.getenv("SMTP_PORT_SENDER")) as server:
+            server.login(os.getenv("SENDER"), os.getenv("SENDER_PASS"))
+            server.sendmail(
+                os.getenv("SENDER"),
+                os.getenv("RECEIVER"), 
+                message.as_string()
+            )
             
-            The bot will now close.
-
-            -----------------------------
-            Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-
-            """            
-            message.attach(MIMEText(body, "plain"))
-
-            # Send email using SSL
-            with smtplib.SMTP_SSL(os.getenv("SMTP_SERVER_SENDER"), os.getenv("SMTP_PORT_SENDER")) as server:
-                server.login(os.getenv("SENDER"), os.getenv("SENDER_PASS"))
-                server.sendmail(
-                    os.getenv("SENDER"),
-                    os.getenv("RECEIVER"), 
-                    message.as_string()
-                )
-                
-            logger.info("Successfully sent connection limit notification email")
+        self.logger.info("Successfully sent connection limit notification email")
             
-        except Exception as e:
-            logger.error(f"Failed to send connection limit email: {str(e)}")
-            raise
-    
+    @retry_with_delay(max_retries=3, delay=10, error_msg="Failed to get last iframe", exceptions_to_raise=(UnexpectedException,)) 
     def get_last_iframe(
         self,
         needed_xpath: Optional[str] = None, 
@@ -1487,44 +1409,41 @@ class Linkedin:
         if not found:
             raise UnexpectedException("Not found the 'ctn' div")
         
-        try:
-            
-            # Try presence first instead of visibility
-            iframes = waiter.until(
-                EC.presence_of_all_elements_located((By.XPATH, div_iframes_xpath))
-            )
-            
-            # Filter for only displayed iframes
-            visible_iframes = [
-                iframe for iframe in iframes 
-                if iframe.is_displayed() and iframe.size['height'] > 0
-            ]
-            
-            logger.info(f"Found {len(visible_iframes)} visible iframes out of {len(iframes)} total")
 
-            if not visible_iframes:
-                raise UnexpectedException("No visible iframes found")
-
-            for iframe in visible_iframes:
-                try:
-                    self.driver.switch_to.frame(iframe)
-                    _, found = self._get_last_iframe_helper(
-                        driver=self.driver,
-                        stop_if_xpath=needed_xpath or "//div", 
-                        max_timeout=max_timeout
-                    )
-                    if found:
-                        return True
-                    self.driver.switch_to.parent_frame()
-                except Exception as e:
-                    logger.warning(f"Failed to switch to iframe: {str(e)}")
-                
-            self.write_response(self.driver.page_source, "error_get_last_iframe.html")
-            raise UnexpectedException("Not found the needed iframe")
             
-        except Exception as e:
-            logger.error(f"Error in getting last iframe: {str(e)}")
-            raise e
+        # Try presence first instead of visibility
+        iframes = waiter.until(
+            EC.presence_of_all_elements_located((By.XPATH, div_iframes_xpath))
+        )
+        
+        # Filter for only displayed iframes
+        visible_iframes = [
+            iframe for iframe in iframes 
+            if iframe.is_displayed() and iframe.size['height'] > 0
+        ]
+        
+        self.logger.info(f"Found {len(visible_iframes)} visible iframes out of {len(iframes)} total")
+
+        if not visible_iframes:
+            raise UnexpectedException("No visible iframes found")
+
+        for iframe in visible_iframes:
+            try:
+                self.driver.switch_to.frame(iframe)
+                _, found = self._get_last_iframe_helper(
+                    driver=self.driver,
+                    stop_if_xpath=needed_xpath or "//div", 
+                    max_timeout=max_timeout
+                )
+                if found:
+                    return True
+                self.driver.switch_to.parent_frame()
+            except Exception as e:
+                self.logger.warning(f"Failed to switch to iframe: {str(e)}")
+            
+        raise UnexpectedException("Not found the needed iframe")
+            
+       
             
     def _get_last_iframe_helper(
         self,
@@ -1572,7 +1491,7 @@ class Linkedin:
                     
 
                 except (TimeoutException, WebDriverException) as e:
-                    logger.info("No more iframes found after %d frames", frames)
+                    self.logger.info("No more iframes found after %d frames", frames)
                     break_while = True
                     break
                 finally:
@@ -1580,9 +1499,9 @@ class Linkedin:
                         try:
                             wait_element = WebDriverWait(driver, DEFAULT_MAX_WAIT)
                             wait_element.until(
-                                EC.presence_of_element_located((By.XPATH, stop_if_xpath))
+                                EC.visibility_of_element_located((By.XPATH, stop_if_xpath))
                             )
-                            logger.info("Found stop xpath: %s after %d frames", stop_if_xpath, frames)
+                            self.logger.info("Found stop xpath: %s after %d frames", stop_if_xpath, frames)
                             return (frames, True)
                         except TimeoutException:
                             if not break_while:
@@ -1590,7 +1509,7 @@ class Linkedin:
                     return (frames, False)
                     
         except Exception as e:
-            logger.error("Unexpected error while traversing iframes: %s", str(e))
+            self.logger.error("Unexpected error while traversing iframes: %s", str(e))
             raise
     
     def check_if_email_code(self):
@@ -1600,9 +1519,9 @@ class Linkedin:
 
         try:
             WebDriverWait(self.driver, self.get_web_driver_wait_time()).until(
-                EC.presence_of_element_located((By.XPATH, form_pin_xpath))
+                EC.visibility_of_element_located((By.XPATH, form_pin_xpath))
             )
-            logger.info("Email verification code required")
+            self.logger.info("Email verification code required")
             code = self.waiting_for_code_mail()
             if not code:
                 raise UnexpectedException("Email code not received")
@@ -1616,24 +1535,15 @@ class Linkedin:
                 EC.element_to_be_clickable((By.XPATH, submit_pin_xpath))
             )
             ActionChains(self.driver).click(submit_pin).perform()
-            logger.info("Submitted email verification code")
+            self.logger.info("Submitted email verification code")
             return True
         except:
-            logger.info("No email verification code required")
+            self.logger.info("No email verification code required")
             return False
-
-    def check_if_captcha(self, max_retries=3, base_timeout=7):
-        """
-        Check and handle Linkedin captcha challenge.
-        
-        Args:
-            max_retries: Maximum number of retry attempts
-            base_timeout: Base timeout for waits
-            
-        Raises:
-            CaptchaNeededException: If captcha needs manual intervention
-            UnexpectedException: For unexpected errors
-        """
+    @retry_with_delay(max_retries=3, delay=10, raise_if_fail=CaptchaNeededException, 
+                    error_msg="Failed to resolve captcha", exceptions_to_raise=(UnexpectedException,))
+    def check_if_captcha(self):
+    
         
         selectors = {
             'captcha': self.captcha_xpath,
@@ -1641,88 +1551,66 @@ class Linkedin:
             'challenge_image': "//img[@id='game_challengeItem_image']"
         }
         
-        for attempt in range(max_retries):
+        try:
+            # Check for captcha presence with dynamic wait
+            waiter_timeout = self.get_web_driver_wait_time()
             try:
-                # Check for captcha presence with dynamic wait
-                timeout = base_timeout * (attempt + 1)
-                logger.info(f"Checking for captcha (attempt {attempt + 1}/{max_retries})")
+                WebDriverWait(self.driver, waiter_timeout).until(
+                    EC.visibility_of_element_located((By.XPATH, selectors['captcha']))
+                )
+            except TimeoutException:
+                self.logger.info("No captcha detected")
+                return
                 
-                try:
-                    WebDriverWait(self.driver, timeout).until(
-                        EC.presence_of_element_located((By.XPATH, selectors['captcha']))
-                    )
-                except TimeoutException:
-                    logger.info("No captcha detected")
-                    return
-                    
-                logger.warning("Captcha detected - starting resolution process")
+            self.logger.warning("Captcha detected - starting resolution process")
+            
+            # Store original frame context
+            original_frame = self.driver.current_window_handle
+            
+           
+            # Navigate to deepest iframe containing captcha
+            self.get_last_iframe(max_timeout=waiter_timeout)
+            
+            # Verify button handling
+            verify_button = WebDriverWait(self.driver, waiter_timeout).until(
+                EC.element_to_be_clickable((By.XPATH, selectors['verify_button']))
+            )
+            
+            # Click verify with retry
+            for click_attempt in range(2):
+                ActionChains(self.driver).click(verify_button).perform()
+                break
+            
+            self.logger.info("Clicked verify button")
+            time.sleep(np.random.uniform(0.5, 1))
+            
+            # Wait for challenge image
+            try:
+                WebDriverWait(self.driver, waiter_timeout).until(
+                    EC.visibility_of_element_located((By.XPATH, selectors['challenge_image']))
+                )
+                self.logger.info("Challenge image loaded")
+            except:
+                raise UnexpectedException("Captcha image not found after verification")
                 
-                # Store original frame context
-                original_frame = self.driver.current_window_handle
+            # Handle the actual captcha resolution
+            self.logger.info("Starting captcha resolution")
+            self.resolve_captcha()
+            
+            # Verify captcha is resolved
+            self.check_if_feed()
+            self.logger.info("Captcha successfully resolved")
+            return
                 
-                try:
-                    # Navigate to deepest iframe containing captcha
-                    self.get_last_iframe(max_timeout=timeout)
                     
-                    # Verify button handling
-                    verify_button = WebDriverWait(self.driver, timeout).until(
-                        EC.element_to_be_clickable((By.XPATH, selectors['verify_button']))
-                    )
-                    
-                    # Click verify with retry
-                    for click_attempt in range(2):
-                        ActionChains(self.driver).click(verify_button).perform()
-                        break
-                    
-                    logger.info("Clicked verify button")
-                    time.sleep(np.random.uniform(0.5, 1))
-                    
-                    # Wait for challenge image
-                    try:
-                        WebDriverWait(self.driver, timeout).until(
-                            EC.presence_of_element_located((By.XPATH, selectors['challenge_image']))
-                        )
-                        logger.info("Challenge image loaded")
-                    except:
-                        raise UnexpectedException("Captcha image not found after verification")
-                        
-                    # Handle the actual captcha resolution
-                    logger.info("Starting captcha resolution")
-                    self.resolve_captcha()
-                    
-                    # Verify captcha is resolved
-                    try:
-                        self.check_if_feed()
-                        logger.info("Captcha successfully resolved")
-                        return
-                    except TimeoutException:
-                        if attempt < max_retries - 1:
-                            logger.warning("Captcha may not be resolved, retrying...")
-                            continue
-                        raise CaptchaNeededException("Failed to verify captcha resolution")
-                        
-                finally:
-                    # Always restore original frame context
-                    try:
-                        self.driver.switch_to.default_content()
-                        self.driver.switch_to.window(original_frame)
-                    except Exception as e:
-                        logger.error(f"Error restoring frame context: {str(e)}")
-                        
-            except Exception as e:
-                logger.error(f"Error handling captcha (attempt {attempt + 1}): {str(e)}")
+        finally:
+            # Always restore original frame context
+            try:
                 self.driver.switch_to.default_content()
                 self.driver.switch_to.window(original_frame)
-                self.write_response(self.driver.page_source, f"error_captcha_attempt_{attempt}.html")
-                
-                if attempt < max_retries - 1:
-                    self.driver.refresh()
-                    time.sleep(np.random.uniform(2, 4) * (attempt + 1))  # Exponential backoff
-                    continue
-                raise
-
-        raise CaptchaNeededException("Failed to handle captcha after max retries")
-
+            except Exception as e:
+                self.logger.error(f"Error restoring frame context: {str(e)}")
+          
     def resolve_captcha_helper(self, message):
         self.send_email(message)
 
@@ -1757,13 +1645,13 @@ class Linkedin:
                 # Check if phone verification is needed
                 try:
                     phone_input = WebDriverWait(self.driver, self.get_web_driver_wait_time()).until(
-                        EC.presence_of_element_located((By.XPATH, selectors['phone_input']))
+                        EC.visibility_of_element_located((By.XPATH, selectors['phone_input']))
                     )
                 except TimeoutException:
-                    logger.info("No phone verification required")
+                    self.logger.info("No phone verification required")
                     return False
 
-                logger.info("Phone verification required")
+                self.logger.info("Phone verification required")
                 phone_number = os.getenv("PHONE_NUMBER")
                 if not phone_number:
                     raise Exception("Phone number not configured in environment variables")
@@ -1780,16 +1668,16 @@ class Linkedin:
                 
                 ActionChains(self.driver).click(submit_button).perform()
                 
-                logger.info("Submitted phone number")
+                self.logger.info("Submitted phone number")
 
                 # Check for error message
                 try:
                     error_div = WebDriverWait(self.driver, self.get_web_driver_wait_time()).until(
-                        EC.presence_of_element_located((By.XPATH, selectors['error_div']))
+                        EC.visibility_of_element_located((By.XPATH, selectors['error_div']))
                     )
                     error_text = error_div.text
-                    logger.warning(f"Phone verification error: {error_text}")
-                    logger.warning(f"Waiting {self.waiting_before_code_retry//3600} hours before retry")
+                    self.logger.warning(f"Phone verification error: {error_text}")
+                    self.logger.warning(f"Waiting {self.waiting_before_code_retry//3600} hours before retry")
                     time.sleep(self.waiting_before_code_retry)
                     continue
                 except TimeoutException:
@@ -1806,11 +1694,11 @@ class Linkedin:
                 if not code:
                     raise Exception("Did not receive verification code")
 
-                logger.info(f"Received verification code: {code}")
+                self.logger.info(f"Received verification code: {code}")
 
                 # Enter verification code
                 code_input = WebDriverWait(self.driver, self.get_web_driver_wait_time()).until(
-                    EC.presence_of_element_located((By.XPATH, selectors['code_input']))
+                    EC.visibility_of_element_located((By.XPATH, selectors['code_input']))
                 )
                 
                 for digit in str(code):
@@ -1827,18 +1715,18 @@ class Linkedin:
                 # Verify success by waiting for error message absence
                 try:
                     WebDriverWait(self.driver, self.get_web_driver_wait_time()).until_not(
-                        EC.presence_of_element_located((By.XPATH, selectors['error_div']))
+                        EC.visibility_of_element_located((By.XPATH, selectors['error_div']))
                     )
-                    logger.info("Phone verification completed successfully")
+                    self.logger.info("Phone verification completed successfully")
                     return True
                 except TimeoutException:
                     if attempt < max_retries - 1:
-                        logger.warning("Verification may have failed, retrying...")
+                        self.logger.warning("Verification may have failed, retrying...")
                         continue
                     raise Exception("Phone verification failed")
 
             except Exception as e:
-                logger.error(f"Phone verification attempt {attempt + 1} failed: {str(e)}")
+                self.logger.error(f"Phone verification attempt {attempt + 1} failed: {str(e)}")
                 if attempt < max_retries - 1:
                     time.sleep(np.random.uniform(2, 4) * (attempt + 1))
                     continue
@@ -1847,6 +1735,7 @@ class Linkedin:
         raise Exception(f"Phone verification failed after {max_retries} attempts")
 
 
+    @retry_with_delay(max_retries=3, delay=10, error_msg="Resolve captcha failed", exceptions_to_raise=(UnexpectedException,CaptchaNeededException))
     def resolve_captcha(self):
 
         """
@@ -1868,14 +1757,13 @@ class Linkedin:
 
         message_to_send = None
         waiter = WebDriverWait(self.driver, self.get_web_driver_wait_time())
-
         try:
            # Wait for captcha images to load
             images = waiter.until(
                 EC.presence_of_all_elements_located((By.XPATH, SELECTORS['images']))
             )
             total_images = len(images)
-            logger.info(f"Found {total_images} captcha images")
+            self.logger.info(f"Found {total_images} captcha images")
             tries_captcha = 1
             MAX_CAPTCHA_RESLV = 15
             current_try = 0
@@ -1894,7 +1782,7 @@ class Linkedin:
                     EC.element_to_be_clickable((By.XPATH, image_xpath))
                 )
                 ActionChains(self.driver).click(image).perform()
-                logger.info(f"Clicked image {response}")
+                self.logger.info(f"Clicked image {response}")
 
                 time.sleep(np.random.uniform(0.5, 1))
                 try:
@@ -1907,12 +1795,11 @@ class Linkedin:
                     try:
                         tries_captcha += 1
                         self.get_last_iframe(needed_xpath=SELECTORS['small_puzzle'])
-                        logger.info("Retrying to resolve captcha")
+                        self.logger.info("Retrying to resolve captcha")
                     except TimeoutException:
-                        logger.info(f"Body: {self.driver.page_source}")
                         raise UnexpectedException("No small puzzle found")
 
-                    logger.info(f"Clicked on try again button")
+                    self.logger.info(f"Clicked on try again button")
                     message_to_send = f"Wrong image selected ({response}). Choose another number between 1 and {total_images}"
                    
 
@@ -1925,18 +1812,15 @@ class Linkedin:
                         EC.visibility_of_element_located((By.XPATH, self.captcha_xpath))
                     )
                     self.get_last_iframe(needed_xpath=SELECTORS['big_puzzle'])
-                    logger.info("Need to resolve captcha again")
+                    self.logger.info("Need to resolve captcha again")
                     self.waiting_before_check = 7
                     message_to_send = "Solve another captcha"
                     continue
                 except TimeoutException:
-                    logger.info("Exiting captcha resolution method")
+                    self.logger.info("Exiting captcha resolution method")
                     return
 
-        except Exception as e:
-            logger.error(f"Error in getting images: {str(e)}")
-            self.write_response(self.driver.page_source, "error_resolve_captcha.html")
-            raise e
+
         finally:
             self.driver.switch_to.default_content()
 
@@ -1949,7 +1833,7 @@ class Linkedin:
 
             x_center = self.viewport_width // 2
             y_center = self.viewport_height // 2
-            logger.info(f"Center coordinates: {x_center}, {y_center}")
+            self.logger.info(f"Center coordinates: {x_center}, {y_center}")
             half_width = 304 //2
             half_height = 294 // 2
             
@@ -1970,21 +1854,21 @@ class Linkedin:
             img_cropped = img.crop((left, top, right, bottom))
             img_cropped.save(screenshot_path)
             
-            logger.info(f"Saved centered screenshot to {screenshot_path}")
+            self.logger.info(f"Saved centered screenshot to {screenshot_path}")
             return screenshot_path
             
         except Exception as e:
-            logger.error(f"Error saving centered screenshot: {str(e)}")
+            self.logger.error(f"Error saving centered screenshot: {str(e)}")
             return None
 
-    def send_email(self, message_to_send=None, subject:str = "Linkedin Bot - Captcha to Solve", max_retries=3):
-        for attempt in range(max_retries):
+    @retry_with_delay(max_retries=3, delay=30, error_msg="Failed to send email")
+    def send_email(self, message_to_send=None, subject:str = "Linkedin Bot - Captcha to Solve"):
             try:
                 self.see_all_emails_captcha()
 
                 screenshot_path = self.save_centered_screenshot()
                 if not screenshot_path:
-                    logger.error("Error saving screenshot")
+                    self.logger.error("Error saving screenshot")
                     raise Exception("Error saving screenshot")
 
                 message = MIMEMultipart()
@@ -2004,21 +1888,8 @@ class Linkedin:
                 with smtplib.SMTP_SSL(os.getenv("SMTP_SERVER_SENDER"), os.getenv("SMTP_PORT_SENDER")) as server:
                     server.login(os.getenv("SENDER"), os.getenv("SENDER_PASS"))
                     server.sendmail(os.getenv("SENDER"), os.getenv("RECEIVER"), message.as_string())
-                    logger.info("Successfully sent email")
+                    self.logger.info("Successfully sent email")
                     return True
-            except Exception as e:
-                if attempt < max_retries - 1:
-                    logger.info(f"Retrying... ({attempt + 2}/{max_retries})")
-                    result = check_internet_connection(logger=logger, timeout=10)
-                    if not result:
-                        logger.error("No internet connection")
-                        time.sleep(60)
-                    else:
-                        logger.error(f"Error, but trying again ({attempt}): {str(e)}")
-                    continue
-                else:
-                    logger.error(f"Error in sending email: {str(e)}")
-                    raise e
             finally:
                 os.remove(screenshot_path)
 
@@ -2043,13 +1914,13 @@ class Linkedin:
         try:
             # Search for single number with whitespace prefix
             match = re.search(regex, message)
-            logger.info(f"Match: {str(match)}")
+            self.logger.info(f"Match: {str(match)}")
             if match:
                 return int(match.group(group))
-            logger.error("No number found in message")
+            self.logger.error("No number found in message")
             return None
         except Exception as e:
-            logger.error(f"Error extracting number: {str(e)}")
+            self.logger.error(f"Error extracting number: {str(e)}")
             return None
         
     def see_all_emails_captcha(self):
@@ -2071,10 +1942,10 @@ class Linkedin:
                     if isinstance(subject, bytes):
                         subject = subject.decode()
                     message = self.get_email_text(message)
-                    logger.info(f"Cleaned Message: {message}")
+                    self.logger.info(f"Cleaned Message: {message}")
 
         except (ConnectionResetError, ssl.SSLError, imaplib.IMAP4.abort) as e:
-            logger.error(f"Connection error during check: {str(e)}")
+            self.logger.error(f"Connection error during check: {str(e)}")
         
         finally:
             if imap:
@@ -2083,276 +1954,213 @@ class Linkedin:
                 except:
                     pass
 
-
+    @retry_with_delay(max_retries=3, delay=30, error_msg="Failed to wait for the captcha response")
     def wait_for_captcha_response(self):
-        max_retries = 3
-        retry_delay = 30
         imap = None
         
-        for attempt in range(max_retries):
-            try:
-                if imap:
-                    try:
-                        imap.logout()
-                    except:
-                        pass
-                        
-                imap = imaplib.IMAP4_SSL(os.getenv("EMAIL_SERVER_HOST_SENDER"), timeout=30)
-                imap.login(os.getenv("SENDER"), os.getenv("SENDER_PASS"))
-                start_time = time.time()
-
-                while (time.time() - start_time) < self.timeout_minutes * 60:
-                    try:
-                        imap.select(os.getenv("SENDER_INBOX_FOLDER"))
-                        search_criteria = f'(UNSEEN FROM "{os.getenv("RECEIVER")}" SUBJECT "Linkedin Bot - Captcha To Solve" SINCE {datetime.now().strftime("%d-%b-%Y")})'
-                        logger.info("Waiting for captcha response")
-                        _, messages = imap.search(None, search_criteria)
-                        
-                        if messages[0]:
-                            logger.info("Captcha response received")
-                            email_id = messages[0].split()[-1]
-                            _, msg = imap.fetch(email_id, "(RFC822)")
-                            email_body = msg[0][1]
-
-                            message = email.message_from_bytes(email_body)
-                            subject = decode_header(message["subject"])[0][0]
-
-                            if isinstance(subject, bytes):
-                                subject = subject.decode()
-                            message = self.get_email_text(message)
-                            number = self.extract_number_from_message(message)
-                            logger.info(f"Extracted number: {number}")
-                            return number
-                            
-                    except (ConnectionResetError, ssl.SSLError, imaplib.IMAP4.abort) as e:
-                        logger.error(f"Connection error during check: {str(e)}")
-                        break  # Break inner loop to trigger retry
-                        
+        try:
+            if imap:
+                try:
+                    imap.logout()
+                except:
+                    pass
                     
-                    time.sleep(self.waiting_before_check)
+            imap = imaplib.IMAP4_SSL(os.getenv("EMAIL_SERVER_HOST_SENDER"), timeout=30)
+            imap.login(os.getenv("SENDER"), os.getenv("SENDER_PASS"))
+            start_time = time.time()
+
+            while (time.time() - start_time) < self.timeout_minutes * 60:
+                try:
+                    imap.select(os.getenv("SENDER_INBOX_FOLDER"))
+                    search_criteria = f'(UNSEEN FROM "{os.getenv("RECEIVER")}" SUBJECT "Linkedin Bot - Captcha To Solve" SINCE {datetime.now().strftime("%d-%b-%Y")})'
+                    self.logger.info("Waiting for captcha response")
+                    _, messages = imap.search(None, search_criteria)
                     
-                if attempt < max_retries - 1:
-                    logger.info(f"Retrying IMAP connection, attempt {attempt + 2}/{max_retries}")
-                    time.sleep(retry_delay)
-                    continue
+                    if messages[0]:
+                        self.logger.info("Captcha response received")
+                        email_id = messages[0].split()[-1]
+                        _, msg = imap.fetch(email_id, "(RFC822)")
+                        email_body = msg[0][1]
+
+                        message = email.message_from_bytes(email_body)
+                        subject = decode_header(message["subject"])[0][0]
+
+                        if isinstance(subject, bytes):
+                            subject = subject.decode()
+                        message = self.get_email_text(message)
+                        number = self.extract_number_from_message(message)
+                        self.logger.info(f"Extracted number: {number}")
+                        return number
+                        
+                except (ConnectionResetError, ssl.SSLError, imaplib.IMAP4.abort) as e:
+                    self.logger.error(f"Connection error during check: {str(e)}")
+                    break  # Break inner loop to trigger retry
+                    
                 
-            except Exception as e:
-                logger.error(f"Error in waiting for captcha response: {str(e)}")
-                if attempt < max_retries - 1:
-                    logger.info(f"Retrying IMAP connection, attempt {attempt + 2}/{max_retries}")
-                    time.sleep(retry_delay)
-                    continue
-                else:
-                    raise e
-            finally:
-                if imap:
-                    try:
-                        imap.logout()
-                    except:
-                        pass
+                time.sleep(self.waiting_before_check)
+            
+            return None
+        finally:
+            if imap:
+                try:
+                    imap.logout()
+                except:
+                    pass
                         
-        return None
 
-
+    @retry_with_delay(max_retries=3, delay=30, error_msg="Failed to wait for the code response")
     def waiting_for_confirmation_email(self):
-        max_retries = 3
-        retry_delay = 30
+    
         imap = None
 
-        for attempt in range(max_retries):
-            try:
-                if imap:
-                    try:
-                        imap.logout()
-                    except:
-                        pass
-                
-                imap = imaplib.IMAP4_SSL(os.getenv("EMAIL_SERVER_HOST_SENDER"), timeout=60)
-                imap.login(os.getenv("SENDER"), os.getenv("SENDER_PASS"))
-                start_time = time.time()
+        try:
+            if imap:
+                try:
+                    imap.logout()
+                except:
+                    pass
+            
+            imap = imaplib.IMAP4_SSL(os.getenv("EMAIL_SERVER_HOST_SENDER"), timeout=60)
+            imap.login(os.getenv("SENDER"), os.getenv("SENDER_PASS"))
+            start_time = time.time()
 
-                while (time.time() - start_time) < self.timeout_minutes * 60:
-                    try:
-                        imap.select(os.getenv("SENDER_INBOX_FOLDER"))
-                        search_criteria = f'(UNSEEN FROM "{os.getenv("RECEIVER")}" SUBJECT "Linkedin Bot - Authorization Needed" SINCE {datetime.now().strftime("%d-%b-%Y")})'
-                        logger.info("Waiting for confirmation email")
-                        _, messages = imap.search(None, search_criteria)
+            while (time.time() - start_time) < self.timeout_minutes * 60:
+                try:
+                    imap.select(os.getenv("SENDER_INBOX_FOLDER"))
+                    search_criteria = f'(UNSEEN FROM "{os.getenv("RECEIVER")}" SUBJECT "Linkedin Bot - Authorization Needed" SINCE {datetime.now().strftime("%d-%b-%Y")})'
+                    self.logger.info("Waiting for confirmation email")
+                    _, messages = imap.search(None, search_criteria)
 
-                        if messages[0]:
-                            logger.info("Confirmation email received")
-                            email_id = messages[0].split()[-1]
-                            _, msg = imap.fetch(email_id, "(RFC822)")
-                            email_body = msg[0][1]
+                    if messages[0]:
+                        self.logger.info("Confirmation email received")
+                        email_id = messages[0].split()[-1]
+                        _, msg = imap.fetch(email_id, "(RFC822)")
+                        email_body = msg[0][1]
 
-                            message = email.message_from_bytes(email_body)
-                            subject = decode_header(message["subject"])[0][0]
+                        message = email.message_from_bytes(email_body)
+                        subject = decode_header(message["subject"])[0][0]
 
-                            if isinstance(subject, bytes):
-                                subject = subject.decode()
-                            message = self.get_email_text(message)
-                            return message
-                    except (ConnectionResetError, ssl.SSLError, imaplib.IMAP4.abort) as e:
-                        logger.error(f"Connection error during check: {str(e)}")
-                        break
-                    time.sleep(self.waiting_before_check)
-                if attempt < max_retries - 1:
-                    logger.info(f"Retrying IMAP connection, attempt {attempt + 2}/{max_retries}")
-                    time.sleep(retry_delay)
-                    continue
-            except Exception as e:
-                logger.error(f"Error in waiting for confirmation email: {str(e)}")
-                if attempt < max_retries - 1:
-                    logger.info(f"Retrying IMAP connection, attempt {attempt + 2}/{max_retries}")
-                    time.sleep(retry_delay)
-                    continue
-                else:
-                    raise e
-            finally:
-                if imap:
-                    try:
-                        imap.logout()
-                    except:
-                        pass
+                        if isinstance(subject, bytes):
+                            subject = subject.decode()
+                        message = self.get_email_text(message)
+                        return message
+                except (ConnectionResetError, ssl.SSLError, imaplib.IMAP4.abort) as e:
+                    self.logger.error(f"Connection error during check: {str(e)}")
+                    break
+                time.sleep(self.waiting_before_check)
+            return None
+       
+        finally:
+            if imap:
+                try:
+                    imap.logout()
+                except:
+                    pass
 
+    @retry_with_delay(max_retries=3, delay=30, error_msg="Failed to wait for the phone code response")
     def waiting_for_phone_code(self):
         imap = None
-        max_retries = 3
-        retry_delay = 30
-        for attempt in range(max_retries):
-            try:
-                if imap:
-                    try:
-                        imap.logout()
-                    except:
-                        pass
-                imap = imaplib.IMAP4_SSL(os.getenv("EMAIL_SERVER_HOST_SENDER"), timeout=30)
-                imap.login(os.getenv("SENDER"), os.getenv("SENDER_PASS"))
-                start_time = time.time()
+        
+        try:
+            if imap:
+                try:
+                    imap.logout()
+                except:
+                    pass
+            imap = imaplib.IMAP4_SSL(os.getenv("EMAIL_SERVER_HOST_SENDER"), timeout=30)
+            imap.login(os.getenv("SENDER"), os.getenv("SENDER_PASS"))
+            start_time = time.time()
 
-                while (time.time() - start_time) < self.timeout_minutes * 60:
-                    try:
-                        imap.select(os.getenv("SENDER_INBOX_FOLDER"))
-                        search_criteria = f'(UNSEEN FROM "{os.getenv("RECEIVER")}" SUBJECT "Linkedin Bot - Phone Code" SINCE {datetime.now().strftime("%d-%b-%Y")})'
-                        logger.info("Waiting for phone code")
-                        _, messages = imap.search(None, search_criteria)
-                        
-                        if messages[0]:
-                            logger.info("Phone code received")
-                            email_id = messages[0].split()[-1]
-                            _, msg = imap.fetch(email_id, "(RFC822)")
-                            email_body = msg[0][1]
+            while (time.time() - start_time) < self.timeout_minutes * 60:
+                try:
+                    imap.select(os.getenv("SENDER_INBOX_FOLDER"))
+                    search_criteria = f'(UNSEEN FROM "{os.getenv("RECEIVER")}" SUBJECT "Linkedin Bot - Phone Code" SINCE {datetime.now().strftime("%d-%b-%Y")})'
+                    self.logger.info("Waiting for phone code")
+                    _, messages = imap.search(None, search_criteria)
+                    
+                    if messages[0]:
+                        self.logger.info("Phone code received")
+                        email_id = messages[0].split()[-1]
+                        _, msg = imap.fetch(email_id, "(RFC822)")
+                        email_body = msg[0][1]
 
-                            message = email.message_from_bytes(email_body)
-                            subject = decode_header(message["subject"])[0][0]
+                        message = email.message_from_bytes(email_body)
+                        subject = decode_header(message["subject"])[0][0]
 
-                            if isinstance(subject, bytes):
-                                subject = subject.decode()
-                            message = self.get_email_text(message)
-                            number = self.extract_number_from_message(message, regex=r'[\s+]?(\d{6})')
-                            logger.info(f"Extracted number: {number}")
-                            return number
-                        
-                    except (ConnectionResetError, ssl.SSLError, imaplib.IMAP4.abort) as e:
-                        logger.error(f"Connection error during check: {str(e)}")
-                        break
-                    time.sleep(self.waiting_before_check)
+                        if isinstance(subject, bytes):
+                            subject = subject.decode()
+                        message = self.get_email_text(message)
+                        number = self.extract_number_from_message(message, regex=r'[\s+]?(\d{6})')
+                        self.logger.info(f"Extracted number: {number}")
+                        return number
+                    
+                except (ConnectionResetError, ssl.SSLError, imaplib.IMAP4.abort) as e:
+                    self.logger.error(f"Connection error during check: {str(e)}")
+                    break
+                time.sleep(self.waiting_before_check)
+            return None
 
-                if attempt < max_retries - 1:
-                    logger.info(f"Retrying IMAP connection, attempt {attempt + 2}/{max_retries}")
-                    time.sleep(retry_delay)
-                    continue
-                
-            except Exception as e:
-                logger.error(f"Error in waiting for code response: {str(e)}")
-                if attempt < max_retries - 1:
-                    logger.info(f"Retrying IMAP connection, attempt {attempt + 2}/{max_retries}. Error: {e}")
-                    time.sleep(retry_delay)
-                    continue
-                else:
-                    raise e
-            finally:
-                if imap:
-                    try:
-                        imap.logout()
-                    except:
-                        pass
-        return None
+        finally:
+            if imap:
+                try:
+                    imap.logout()
+                except:
+                    pass
 
+    @retry_with_delay(max_retries=3, delay=30, error_msg="Failed to wait for the email code response from Linkedin")
     def waiting_for_code_mail(self):
-        max_retries = 1
-        retry_delay = 30
+      
         imap = None
         
-        for attempt in range(max_retries):
-            try:
-                if imap:
-                    try:
-                        imap.logout()
-                    except:
-                        pass
-                        
-                # Connect to Outlook IMAP server
-                imap = imaplib.IMAP4_SSL(os.getenv("EMAIL_SERVER_HOST_LINKEDIN"))
-                imap.login(os.getenv("LINKEDIN_USER_MAIL"), os.getenv("LINKEDIN_MAILBOX_PASS"))
-                start_time = time.time()
-
-                while (time.time() - start_time) < self.timeout_minutes * 60:
-                    try:
-                        imap.select(os.getenv("LINKEDIN_INBOX_FOLDER"))  # Outlook uses uppercase INBOX
-                        # Outlook search criteria syntax
-                        search_criteria = f'(UNSEEN FROM "{os.getenv("EMAIL_LINKEDIN_CODE")}" HEADER "X-LinkedIn-Template" "security_ato_challenge_send_pin")' #  SINCE {datetime.now().strftime("%d-%b-%Y")}
-                        logger.info("Waiting for security code from Linkedin")
-                        _, messages = imap.search(None, search_criteria)
-                        
-                        if messages[0]:
-                            logger.info("Code response received from Linkedin")
-                            email_id = messages[0].split()[-1]
-                            _, msg = imap.fetch(email_id, "(RFC822)")
-                            email_body = msg[0][1]
-
-                            message = email.message_from_bytes(email_body)
-                            subject = decode_header(message["subject"])[0][0]
-
-                            if isinstance(subject, bytes):
-                                subject = subject.decode()
-                            message = self.get_email_text(message)
-                            logger.info(f"Cleaned Message: {message}")
-                            number = self.extract_number_from_message(message, regex=r"\s(\d{6})\s", group=1)
-                            return number
-                            
-                    except (ConnectionResetError, ssl.SSLError, imaplib.IMAP4.abort) as e:
-                        logger.error(f"Connection error during check: {str(e)}")
-                        break
-                        
-                    time.sleep(20)
+        try:
+            if imap:
+                try:
+                    imap.logout()
+                except:
+                    pass
                     
-                if attempt < max_retries - 1:
-                    logger.info(f"Retrying IMAP connection, attempt {attempt + 2}/{max_retries}")
-                    time.sleep(retry_delay)
-                    continue
+            # Connect to Outlook IMAP server
+            imap = imaplib.IMAP4_SSL(os.getenv("EMAIL_SERVER_HOST_LINKEDIN"))
+            imap.login(os.getenv("LINKEDIN_USER_MAIL"), os.getenv("LINKEDIN_MAILBOX_PASS"))
+            start_time = time.time()
+
+            while (time.time() - start_time) < self.timeout_minutes * 60:
+                try:
+                    imap.select(os.getenv("LINKEDIN_INBOX_FOLDER"))  # Outlook uses uppercase INBOX
+                    # Outlook search criteria syntax
+                    search_criteria = f'(UNSEEN FROM "{os.getenv("EMAIL_LINKEDIN_CODE")}" HEADER "X-LinkedIn-Template" "security_ato_challenge_send_pin")' #  SINCE {datetime.now().strftime("%d-%b-%Y")}
+                    self.logger.info("Waiting for security code from Linkedin")
+                    _, messages = imap.search(None, search_criteria)
+                    
+                    if messages[0]:
+                        self.logger.info("Code response received from Linkedin")
+                        email_id = messages[0].split()[-1]
+                        _, msg = imap.fetch(email_id, "(RFC822)")
+                        email_body = msg[0][1]
+
+                        message = email.message_from_bytes(email_body)
+                        subject = decode_header(message["subject"])[0][0]
+
+                        if isinstance(subject, bytes):
+                            subject = subject.decode()
+                        message = self.get_email_text(message)
+                        self.logger.info(f"Cleaned Message: {message}")
+                        number = self.extract_number_from_message(message, regex=r"\s(\d{6})\s", group=1)
+                        return number
+                        
+                except (ConnectionResetError, ssl.SSLError, imaplib.IMAP4.abort) as e:
+                    self.logger.error(f"Connection error during check: {str(e)}")
+                    break
+                    
+                time.sleep(20)
                 
-            except imaplib.IMAP4.error as e:
-                logger.error(f"Outlook IMAP error: {str(e)}")
-                if attempt < max_retries - 1:
-                    logger.info(f"Retrying IMAP connection, attempt {attempt + 2}/{max_retries}")
-                    time.sleep(retry_delay)
-                    continue
-                else:
-                    raise e
-            except Exception as e:
-                logger.error(f"Error in waiting for email code: {str(e)}")
-                if attempt < max_retries - 1:
-                    logger.info(f"Retrying IMAP connection, attempt {attempt + 2}/{max_retries}")
-                    time.sleep(retry_delay)
-                    continue
-                else:
-                    raise e
-            finally:
-                if imap:
-                    try:
-                        imap.logout()
-                    except:
-                        pass
+            return None    
+        finally:
+            if imap:
+                try:
+                    imap.logout()
+                except:
+                    pass
                         
         return None
 
@@ -2484,12 +2292,20 @@ class Linkedin:
                 actions = ActionChains(self.driver)
                 actions.move_to_element(element).perform()
             except Exception as e2:
-                logger.error(f"Direct mouse movement also failed: {str(e2)}") 
+                self.logger.error(f"Direct mouse movement also failed: {str(e2)}") 
 
 
     def get_web_driver_wait_time(self):
         return np.random.uniform(self.min_WDWT, self.max_WDWT)
+    
     def close_browser(self):
-
-        self.driver.quit()
+        try:
+            self.driver.close()
+        except:
+            self.logger.warning("Error closing driver")
+        try:
+            self.driver.quit()
+        except:
+            self.logger.warning("Error quitting driver")
+            
 

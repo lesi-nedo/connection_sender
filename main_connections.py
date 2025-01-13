@@ -22,6 +22,6 @@ if __name__ == "__main__":
         pass
     finally:
         linkedin.close_browser()
-        linkedin.logger.info("Driver closed")
+        linkedin.logger.info("Driver and browser closed")
         linkedin.logger.info("Exiting...")
         exit(0) 
