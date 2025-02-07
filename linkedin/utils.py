@@ -82,7 +82,7 @@ def check_internet_connection(logger, retries: int = 3, timeout: int = 5) -> boo
     logger.error("No internet connection available")
     return False
 
-def retry_with_delay(max_retries=3, delay=5, raise_if_fail=Exception, error_msg="", exceptions_to_raise=()):
+def retry_with_delay(max_retries=3, delay=5, raise_if_fail=Exception, error_msg="", exceptions_to_raise=(), call_func=None):
     def decorator(func):
 
         @wraps(func)
@@ -105,6 +105,8 @@ def retry_with_delay(max_retries=3, delay=5, raise_if_fail=Exception, error_msg=
                                 raise e
                             
                     logger.warning(f"Attempt {i + 1} failed in the function {func.__name__} with error: {e}")
+                    if call_func:
+                        call_func(self)
                     self.write_response(self.driver.page_source, f"{func.__name__}_error_{i + 1}.html")
                     result = check_internet_connection(logger)
                     if not result:

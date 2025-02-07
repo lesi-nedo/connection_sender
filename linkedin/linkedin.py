@@ -313,6 +313,9 @@ class Linkedin:
                     self.logger.info(f"Did we reached the limit in searching for connectable people? {not result}")
                     if result:
                         self.connect_to_alumni()
+                except LastPageException as e:
+                    self.logger.info("Reached last page")
+                    self.return_home()
                 except NoMoreOrgException as e:
                     self.logger.info("No more organizations to search")
                     self.send_limit_reached_email("No more organizations to search")
@@ -334,7 +337,7 @@ class Linkedin:
                         continue
                     with open(filename_day_comp, "w") as f:
                         f.write("Reached limit")
-                    self.send_limit_reached_email("Reached daily limit set. Will continue tomorrow.")
+                    self.send_limit_reached_email(f"Reached daily limit set of: {self.max_requests_per_day}. Will continue tomorrow.")
                     return
                 
                 except WebSessionExpired as e:
@@ -464,6 +467,7 @@ class Linkedin:
                     ActionChains(self.driver).click(confirm_button).perform()
                     
                     time.sleep(np.random.randint(1.5, 3.5))
+                    self.logger.info("Connection withdrawn")
                     
                 except Exception as e:
                     self.logger.error(f"Error in withdraw: {str(e)}")
@@ -527,7 +531,7 @@ class Linkedin:
 
                     # Navigate to previous page
                     try:
-                        previous_button = WebDriverWait(self.driver, ).until(
+                        previous_button = WebDriverWait(self.driver, self.get_web_driver_wait_time()).until(
                             EC.element_to_be_clickable((By.XPATH, previous_page_button_xpath))
                         )
                         self.driver.execute_script(
@@ -535,8 +539,8 @@ class Linkedin:
                             previous_button
                         )
                         ActionChains(self.driver).click(previous_button).perform()
-                    except:
-                        self.logger.info("Reached first page")
+                    except Exception as e:
+                        self.logger.info("Reached first page -- Error type: {e.__class__.__name__}")
                         return
 
                     curr_page -= 1
@@ -573,7 +577,7 @@ class Linkedin:
             self.logger.error(f"Error in withdraw generator: {str(e)}")
             raise e
 
-    @retry_with_delay(max_retries=3, delay=10, error_msg="Could not click next page button")
+    @retry_with_delay(max_retries=3, delay=10, error_msg="Could not click next page button", call_func=lambda self: self.driver.refresh())
     def click_next_page(self, next_page_button, max_retries=3):
         self.logger.info("Clicking next page button")
           
@@ -1188,6 +1192,10 @@ class Linkedin:
         )
         return element
 
+    @retry_with_delay(
+            max_retries=3, delay=10, error_msg="Failed to connect to alumni",
+            exceptions_to_raise=(ReachedLimitException, ReachedDailyLimitSetException, NoConnectionException, LastPageException),
+            call_func=lambda self: self.driver.refresh())
     def connect_to_alumni(self):
         selectors = {
             'connect_button': "//button[contains(@aria-label, 'Invite') and span[contains(., 'Connect')]]",
@@ -1202,163 +1210,152 @@ class Linkedin:
             'popup_box': "//div[contains(@class, 'ip-fuse-limit-alert') and @role='dialog']"
 
         }
-
+            
+        func_to_call = None
         try:
-            # Wait for either results or no results
-            
-            func_to_call = None
+            if self.reached_limit_search:
+                self.logger.info("Setting {generator_when_limit} as function to call")
+                func_to_call = partial(self.generator_when_limit, selectors['connect_button'])
+            else:
+                WebDriverWait(self.driver, self.get_web_driver_wait_time()).until(
+                    EC.visibility_of_element_located((By.XPATH, selectors['limit_search_xpath']))
+                )
+                self.reached_limit_search = True
+                self.logger.info("Reached monthly limit for profile searches")
+                return
+        except:
             try:
-                if self.reached_limit_search:
-                    self.logger.info("Setting {generator_when_limit} as function to call")
-                    func_to_call = partial(self.generator_when_limit, selectors['connect_button'])
-                else:
-                    WebDriverWait(self.driver, self.get_web_driver_wait_time()).until(
-                        EC.visibility_of_element_located((By.XPATH, selectors['limit_search_xpath']))
-                    )
-                    self.reached_limit_search = True
-                    self.logger.info("Reached monthly limit for profile searches")
-                    return
+                WebDriverWait(self.driver, self.get_web_driver_wait_time()).until(
+                    EC.visibility_of_element_located((By.XPATH, selectors['no_results']))
+                )
+                self.logger.info("No connectable people found")
+                raise NoConnectionException("No connectable people found")
             except:
-                try:
-                    WebDriverWait(self.driver, self.get_web_driver_wait_time()).until(
-                        EC.visibility_of_element_located((By.XPATH, selectors['no_results']))
-                    )
-                    self.logger.info("No connectable people found")
-                    raise NoConnectionException("No connectable people found")
-                except:
-                    pass
+                pass
 
-                self.logger.info("Setting {self.generator_pages} as function to call")
-                # Add random delay to simulate human behavior
-                func_to_call = partial(self.generator_pages, selectors['connect_button'])
+            self.logger.info("Setting {self.generator_pages} as function to call")
+            # Add random delay to simulate human behavior
+            func_to_call = partial(self.generator_pages, selectors['connect_button'])
+        
+        time.sleep(np.random.uniform(1, 2))
+        # Get all connectable alumni
+        self.logger.info("Getting connectable alumni")
+        for all_connect_buttons in func_to_call():
+            connection_len = len(all_connect_buttons)
+            self.logger.info(f"Found {connection_len} connectable alumni")
             
-            time.sleep(np.random.uniform(1, 2))
-            # Get all connectable alumni
-            self.logger.info("Getting connectable alumni")
-            for all_connect_buttons in func_to_call():
-                connection_len = len(all_connect_buttons)
-                self.logger.info(f"Found {connection_len} connectable alumni")
-                
-                if connection_len > 6:
-                    num_elements = int(connection_len * 0.5)
-                    indeces = np.random.choice(connection_len, num_elements, replace=False)
-                    all_connect_buttons = [all_connect_buttons[i] for i in indeces]
-            
-                for connect_button in all_connect_buttons:
+            if connection_len > 6:
+                num_elements = int(connection_len * 0.5)
+                indeces = np.random.choice(connection_len, num_elements, replace=False)
+                all_connect_buttons = [all_connect_buttons[i] for i in indeces]
+        
+            for connect_button in all_connect_buttons:
+                try:
+                    # Wait for button to be clickable
+                    clickable_button = WebDriverWait(self.driver, self.get_web_driver_wait_time()).until(
+                        EC.element_to_be_clickable(connect_button)
+                    )
+                    
+                    # Scroll into view
+                    self.driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});", clickable_button)
+                    time.sleep(np.random.uniform(1.5, 7.5))
+                    
+                    # Try JavaScript click if regular click fails
+                    ActionChains(self.driver).click(clickable_button).perform()
+                    
+                    time.sleep(np.random.uniform(0.5, 4))
                     try:
-                        # Wait for button to be clickable
                         clickable_button = WebDriverWait(self.driver, self.get_web_driver_wait_time()).until(
-                            EC.element_to_be_clickable(connect_button)
+                            EC.element_to_be_clickable((By.XPATH, selectors['button_send1']))
                         )
-                        
-                        # Scroll into view
-                        self.driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});", clickable_button)
-                        time.sleep(np.random.uniform(1.5, 7.5))
-                        
-                        # Try JavaScript click if regular click fails
-                        ActionChains(self.driver).click(clickable_button).perform()
-                        
-                        time.sleep(np.random.uniform(0.5, 4))
+                    except:
                         try:
                             clickable_button = WebDriverWait(self.driver, self.get_web_driver_wait_time()).until(
-                                EC.element_to_be_clickable((By.XPATH, selectors['button_send1']))
+                                EC.element_to_be_clickable((By.XPATH, selectors['button_send2']))
                             )
                         except:
                             try:
-                                clickable_button = WebDriverWait(self.driver, self.get_web_driver_wait_time()).until(
-                                    EC.element_to_be_clickable((By.XPATH, selectors['button_send2']))
+                                toast_xpath = "//div[contains(@class, 'artdeco-toast-item') and //p[@class='artdeco-toast-item__message']]/li-icon[@type='error-pebble-icon']"
+                                toast_element = WebDriverWait(self.driver, self.get_web_driver_wait_time()).until(
+                                    EC.visibility_of_element_located((By.XPATH, toast_xpath))
                                 )
-                            except:
-                                try:
-                                    toast_xpath = "//div[contains(@class, 'artdeco-toast-item') and //p[@class='artdeco-toast-item__message']]/li-icon[@type='error-pebble-icon']"
-                                    toast_element = WebDriverWait(self.driver, self.get_web_driver_wait_time()).until(
-                                        EC.visibility_of_element_located((By.XPATH, toast_xpath))
-                                    )
-                                    self.logger.info(f"Error toast message found: {toast_element.text}")
-                                except TimeoutException:
-                                    self.logger.info("No error toast message found, will continue")
-                                    continue
-                                except Exception as e:
-                                    self.logger.error(f"Error in toast message: {str(e)}")
-                                    raise NoSendButtonException("No send button found")
-                        self.driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});", clickable_button)
-                        ActionChains(self.driver).click(clickable_button).perform()
-                        time.sleep(np.random.uniform(1.5, 2.5))
+                                self.logger.info(f"Error toast message found: {toast_element.text}")
+                            except TimeoutException:
+                                self.logger.info("No error toast message found, will continue")
+                                continue
+                            except Exception as e:
+                                self.logger.error(f"Error in toast message: {str(e)}")
+                                raise NoSendButtonException("No send button found")
+                    self.driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});", clickable_button)
+                    ActionChains(self.driver).click(clickable_button).perform()
+                    time.sleep(np.random.uniform(1.5, 2.5))
+
+                    try:
+                        dismiss_button = WebDriverWait(self.driver, self.get_web_driver_wait_time()).until(
+                            EC.element_to_be_clickable((By.XPATH, selectors['dismiss_button']))
+                        )
+                        self.logger.info("Found dismiss button, clicking it")
+                        ActionChains(self.driver).click(dismiss_button).perform()
+
+                        time.sleep(np.random.uniform(0.5, 1))
+                    except TimeoutException:
+                        self.logger.debug("No dismiss button found")
+                        pass
+
+                    try:
+                        WebDriverWait(self.driver, self.get_web_driver_wait_time()).until(
+                            EC.visibility_of_element_located((By.XPATH, selectors['popup_box']))
+                        )
 
                         try:
-                            dismiss_button = WebDriverWait(self.driver, self.get_web_driver_wait_time()).until(
-                                EC.element_to_be_clickable((By.XPATH, selectors['dismiss_button']))
+                            growing_popup = WebDriverWait(self.driver, self.get_web_driver_wait_time()).until(
+                                EC.element_to_be_clickable((By.XPATH, selectors['growing_popup']))
                             )
-                            self.logger.info("Found dismiss button, clicking it")
-                            ActionChains(self.driver).click(dismiss_button).perform()
-
-                            time.sleep(np.random.uniform(0.5, 1))
-                        except TimeoutException:
-                            self.logger.debug("No dismiss button found")
-                            pass
-
-                        try:
-                            WebDriverWait(self.driver, self.get_web_driver_wait_time()).until(
-                                EC.visibility_of_element_located((By.XPATH, selectors['popup_box']))
-                            )
-
+                            self.logger.info("Found growing network message popup")
+                            ActionChains(self.driver).click(growing_popup).perform()
+                        except TimeoutException as e:
                             try:
-                                growing_popup = WebDriverWait(self.driver, self.get_web_driver_wait_time()).until(
-                                    EC.element_to_be_clickable((By.XPATH, selectors['growing_popup']))
+                                close_to_reach_limit_button = WebDriverWait(self.driver, self.get_web_driver_wait_time()).until(
+                                    EC.element_to_be_clickable((By.XPATH, selectors['close_to_reach_limit_button']))
                                 )
-                                self.logger.info("Found growing network message popup")
-                                ActionChains(self.driver).click(growing_popup).perform()
+                                self.logger.info("Found close to reach limit button, clicking it")
+                                ActionChains(self.driver).click(close_to_reach_limit_button).perform()
+
                             except TimeoutException as e:
                                 try:
-                                    close_to_reach_limit_button = WebDriverWait(self.driver, self.get_web_driver_wait_time()).until(
-                                        EC.element_to_be_clickable((By.XPATH, selectors['close_to_reach_limit_button']))
+                                    reached_limit_button = WebDriverWait(self.driver, self.get_web_driver_wait_time()).until(
+                                        EC.element_to_be_clickable((By.XPATH, selectors['reached_limit_button']))
                                     )
-                                    self.logger.info("Found close to reach limit button, clicking it")
-                                    ActionChains(self.driver).click(close_to_reach_limit_button).perform()
+                                    self.logger.info("Found reached limit button, clicking it")
+                                    self.write_response(self.driver.page_source, "reached_limit.html")
 
-                                except TimeoutException as e:
-                                    try:
-                                        reached_limit_button = WebDriverWait(self.driver, self.get_web_driver_wait_time()).until(
-                                            EC.element_to_be_clickable((By.XPATH, selectors['reached_limit_button']))
-                                        )
-                                        self.logger.info("Found reached limit button, clicking it")
-                                        self.write_response(self.driver.page_source, "reached_limit.html")
+                                    ActionChains(self.driver).click(reached_limit_button).perform()
 
-                                        ActionChains(self.driver).click(reached_limit_button).perform()
+                                    time.sleep(np.random.uniform(0.5, 1))
+                                    self.logger.info("Reached weekly connection limit")
+                                    raise ReachedLimitException("Reached connection limit")
+                                except ReachedLimitException:
+                                    raise
+                                except:
+                                    pass
+                    except TimeoutException as e:
+                        pass
+                    time.sleep(np.random.uniform(1, 2))
 
-                                        time.sleep(np.random.uniform(0.5, 1))
-                                        self.logger.info("Reached weekly connection limit")
-                                        raise ReachedLimitException("Reached connection limit")
-                                    except ReachedLimitException:
-                                        raise
-                                    except:
-                                        pass
-                        except TimeoutException as e:
-                            pass
-                        time.sleep(np.random.uniform(1, 2))
-    
-                        self.logger.info(f"Successfully connected to alumni")
-                        self.num_connections_sent += 1
-                        self.sent_connections_org.update({self.org_name: self.num_connections_sent})
-                        if self.num_connections_sent >= self.max_requests_per_day:
-                            self.logger.info("Reached daily connection limit")
-                            raise ReachedDailyLimitSetException("Reached daily connection limit")
+                    self.logger.info(f"Successfully connected to alumni")
+                    self.num_connections_sent += 1
+                    self.sent_connections_org.update({self.org_name: self.num_connections_sent})
+                    if self.num_connections_sent >= self.max_requests_per_day:
+                        self.logger.info("Reached daily connection limit")
+                        raise ReachedDailyLimitSetException("Reached daily connection limit")
 
-                    except (ReachedLimitException, ReachedDailyLimitSetException) as e:
-                        raise
-                    except Exception as e:
-                        self.logger.warning(f"Error in connect_to_alumni: {str(e)}")
-                        self.write_response(self.driver.page_source, "error_connect.html")
-                        continue
+                except (ReachedLimitException, ReachedDailyLimitSetException) as e:
+                    raise
+                except Exception as e:
+                    self.logger.warning(f"Error in connect_to_alumni: {str(e)}")
+                    self.write_response(self.driver.page_source, "error_connect.html")
+                    continue
 
-        except (ReachedLimitException, ReachedDailyLimitSetException, NoConnectionException) as e:
-            raise e
-        except LastPageException:
-            self.logger.info("Reached last page")
-            return
-        except Exception as e:
-            self.logger.error(f"Attempt failed in connect_to_alumni: {str(e)}")
-            self.write_response(self.driver.page_source, f"error_get_connectable_alumni.html")
 
 
     def write_response(self, response, name):
