@@ -346,18 +346,23 @@ class Linkedin:
                         self.send_error_email(f"Reached max recursion in send_connection_request, error: WebSessionExpired - {str(e)}")
                         return
                     self.send_connection_request(max_recursion=max_recursion-1)
-                except:
-                    raise
+                except Exception as e:
+                    message = None
+                    if hasattr(e, "msg"):
+                        message = e.msg
+                    self.logger.error(f"Error in send_connection_request. {str(message)}")
+                    raise e
         except Exception as e:
             self.self.logger.error(f"Error sending connection request: {e}")
             self.send_error_email(str(e))
             raise
         finally:
-            if self.sent_connections_org.get(self.org_name, None):
-                    new_row = pd.DataFrame({'org_name': [self.org_name]})
-                    self.org_chose_dt = pd.concat([self.org_chose_dt, new_row], ignore_index=True)
-                    self.logger.info(f"Added {self.org_name} to orgs chosen this month")
-                    self.org_chose_dt.to_csv(self.orgs_chosen_month_path, index=False)
+            for org, sent in self.sent_connections_org.items():
+                    if sent > 5: # if an organization has more than 5 connections sent, remove it from the list of orgs to be chosen next time
+                        new_row = pd.DataFrame({'org_name': [org]})
+                        self.org_chose_dt = pd.concat([self.org_chose_dt, new_row], ignore_index=True)
+                        self.logger.info(f"Added {org} to orgs chosen this month")
+                        self.org_chose_dt.to_csv(self.orgs_chosen_month_path, index=False)
 
     
     @retry_with_delay(max_retries=3, delay=60, error_msg="Could not send error email")
@@ -981,24 +986,19 @@ class Linkedin:
         
     def _search_common(self, org_name):
         selectors = {
-            'search_input': "input[class^='search-global-typeahead__input']",
-            'search_button': "//button[contains(@class, 'search-global-typeahead__collapsed-search-button')]",
+            'search_input': "//input[@type='text' and @placeholder='Search']",
             'company_button': "//div[@id='search-reusables__filters-bar']/ul/li/button[contains(., 'Companies')]",
             'org_div': "//ul[@role = 'list']/li[1]/div",
             'no_found_company': "//h2[contains(., 'No results found')]"
         }
         try:
-                # Find and click search button first
-            search_button = WebDriverWait(self.driver, self.get_web_driver_wait_time()).until(
-                EC.element_to_be_clickable((By.XPATH, selectors['search_button']))
+            search_element = WebDriverWait(self.driver, self.get_web_driver_wait_time()).until(
+                EC.visibility_of_element_located((By.XPATH, selectors['search_input']))
             )
-            ActionChains(self.driver).click(search_button).perform()
-            time.sleep(np.random.uniform(0.5, 1))
         except:
-            pass
-        search_element = WebDriverWait(self.driver, self.get_web_driver_wait_time()).until(
-            EC.element_to_be_clickable((By.CSS_SELECTOR, selectors['search_input']))
-        )
+            self.logger.warning("Could not find search input")
+            self.write_response(self.driver.page_source, "error_search_input.html")
+            return False
         
         # Clear search input
         try:
@@ -1009,8 +1009,8 @@ class Linkedin:
         
         # Type organization name
         len_name = len(org_name)
-        if len_name > 6:
-            search_text = org_name[:int(len_name * np.random.uniform(0.75, 0.92))]
+        if len_name > 10:
+            search_text = org_name[:int(len_name * np.random.uniform(0.7, 0.95))]
         else:
             search_text = org_name
 
@@ -1018,14 +1018,14 @@ class Linkedin:
             try:
                 # Relocate element for each character to avoid stale reference
                 search_element = WebDriverWait(self.driver, self.get_web_driver_wait_time()).until(
-                    EC.visibility_of_element_located((By.CSS_SELECTOR, selectors['search_input']))
+                    EC.visibility_of_element_located((By.XPATH, selectors['search_input']))
                 )
                 search_element.send_keys(char)
                 time.sleep(np.random.uniform(0.1, 0.3))
             except:
                 # If element becomes stale, find it again
                 search_element = WebDriverWait(self.driver, self.get_web_driver_wait_time()).until(
-                    EC.visibility_of_element_located((By.CSS_SELECTOR, selectors['search_input']))
+                    EC.visibility_of_element_located((By.XPATH, selectors['search_input']))
                 )
                 search_element.send_keys(char)
                 
@@ -1086,7 +1086,7 @@ class Linkedin:
             )
             # self.human_like_mouse_move(people_tab)
             ActionChains(self.driver).click(people_tab).perform()
-
+            self.logger.info("Clicked people tab")
         except:
             try:
                 alumni_tab = WebDriverWait(self.driver, self.get_web_driver_wait_time()).until(
@@ -1094,6 +1094,7 @@ class Linkedin:
                 )
                 # self.human_like_mouse_move(alumni_tab)
                 ActionChains(self.driver).click(alumni_tab).perform()
+                self.logger.info("Clicked alumni tab")
             except TimeoutException:
                 self.logger.warning(f"Neither people nor alumni tab found: {org_name} ")
                 self.write_response(self.driver.page_source, "error_tabs_with_limit.html")
