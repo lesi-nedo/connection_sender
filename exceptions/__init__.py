@@ -5,7 +5,7 @@ from .NoConnectionException import NoConnectionException
 from .CaptchaNeededException import CaptchaNeededException
 from .UnexpectedException import UnexpectedException
 from .NoSendButtonException import NoSendButtonException
-from .ReachedLimitException import ReachedLimitException
+from .ReachedWeeklyLimitException import ReachedWeeklyLimitException
 from .AccountRestrictedException import AccountRestrictedException
 from .ReachedDailyLimitSetException import ReachedDailyLimitSetException
 from .ReachedWithdrawLimitException import ReachedWithdrawLimitException
@@ -22,7 +22,7 @@ __all__ = [
     'CaptchaNeededException',
     'UnexpectedException',
     'NoSendButtonException',
-    'ReachedLimitException',
+    'ReachedWeeklyLimitException',
     'AccountRestrictedException',
     'ReachedDailyLimitSetException',
     'ReachedWithdrawLimitException',

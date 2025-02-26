@@ -49,7 +49,7 @@ from .user_agents import list_users
 from exceptions import (
     LoginException, ReachedDailyLimitSetException, NoMoreOrgException,
     NoConnectionException, CaptchaNeededException, AccountRestrictedException,
-    UnexpectedException, NoSendButtonException, ReachedLimitException, ReachedWithdrawLimitException,
+    UnexpectedException, NoSendButtonException, ReachedWeeklyLimitException, ReachedWithdrawLimitException,
     LastPageException, WebSessionExpired, NoCardWithPeopleException
 )
 from .utils import (
@@ -310,7 +310,7 @@ class Linkedin:
                     else:
                         self.logger.info("Searching for organization people with no reached limit")
                         result = self.search_org_no_limit(self.org_name)
-                    self.logger.info(f"Did we reached the limit in searching for connectable people? {not result}")
+                    self.logger.info(f"Did we reached the limit in searching for connectable people? {self.reached_limit_search}")
                     if result:
                         self.connect_to_alumni()
                 except LastPageException as e:
@@ -324,16 +324,15 @@ class Linkedin:
                     self.logger.info("No more alumni to connect")
                     self.return_home()
                     continue
-                except ReachedLimitException as e:
+                except ReachedWeeklyLimitException as e:
                     with open(filename_week_comp, "w") as f:
                         f.write("Reached limit")
-                    self.send_limit_reached_email()
+                    self.send_limit_reached_email(f"Reached weekly limit of LinkedIn connections. We sent {self.num_connections_sent} connections. Will continue next week.")
                     return
                 except ReachedDailyLimitSetException as e:
                     if today == "Sun":
                         self.logger.info("Reached daily limit set, but it's Sunday. Will continue to send connections.")
-                        self.max_requests_per_day = 100
-                        self.num_connections_sent = 0
+                        self.max_requests_per_day = 500
                         continue
                     with open(filename_day_comp, "w") as f:
                         f.write("Reached limit")
@@ -988,8 +987,10 @@ class Linkedin:
         selectors = {
             'search_input': "//input[@type='text' and @placeholder='Search']",
             'company_button': "//div[@id='search-reusables__filters-bar']/ul/li/button[contains(., 'Companies')]",
-            'org_div': "//ul[@role = 'list']/li[1]/div",
-            'no_found_company': "//h2[contains(., 'No results found')]"
+            'org_div': "//ul[@role = 'list']/li[1]/div/div[contains(@class, 'cursor-pointer')]",
+            'org_div_no_comp': "//div[.//span[contains(., 'followers')]]/a[contains(@href, 'company')] | //div[.//span[contains(., 'followers')]]/a[contains(@href, 'school')]",
+            'no_found_company': "//h2[contains(., 'No results found')]",
+            'company_button_clicked': " //button[contains(@aria-label,'Filter by: Companies')]"
         }
         try:
             search_element = WebDriverWait(self.driver, self.get_web_driver_wait_time()).until(
@@ -1042,13 +1043,38 @@ class Linkedin:
         search_element.send_keys(Keys.RETURN)
         time.sleep(np.random.uniform(1, 2))
         
-        # Wait for company filter button
-        company_button = WebDriverWait(self.driver, self.get_web_driver_wait_time()).until(
-            EC.element_to_be_clickable((By.XPATH, selectors['company_button']))
-        )
-        self.logger.info("Found search results")
-        
-        ActionChains(self.driver).click(company_button).perform()
+        try:
+            # Wait for company filter button
+            company_button = WebDriverWait(self.driver, self.get_web_driver_wait_time()).until(
+                EC.element_to_be_clickable((By.XPATH, selectors['company_button']))
+            )
+            incremnt_var = 0
+            while incremnt_var < self.timeout_minutes:
+                ActionChains(self.driver).click(company_button).perform()
+                time.sleep(np.random.uniform(1, 2))
+                button_clicked = WebDriverWait(self.driver, self.get_web_driver_wait_time()).until(
+                    EC.visibility_of_element_located((By.XPATH, selectors['company_button_clicked']))
+                )
+                if button_clicked:
+                    break
+                incremnt_var += 1
+
+            if incremnt_var == self.timeout_minutes:
+                self.logger.warning("Company button was not clicked")
+                raise Exception("Company button was not clicked")
+        except:
+            try:
+                self.logger.warning("No company filter button found")
+                first_org = WebDriverWait(self.driver, self.get_web_driver_wait_time()).until(
+                    EC.element_to_be_clickable((By.XPATH, selectors['org_div_no_comp']))
+                )
+                ActionChains(self.driver).click(first_org).perform()
+                time.sleep(np.random.uniform(1, 2))
+                return True
+            except:
+                self.logger.warning("No organization div found")
+                self.write_response(self.driver.page_source, "error_org_div.html")
+                return False
         try:
             WebDriverWait(self.driver, self.get_web_driver_wait_time()).until(
                 EC.visibility_of_element_located((By.XPATH, selectors['no_found_company']))
@@ -1057,14 +1083,13 @@ class Linkedin:
         except TimeoutException:
             pass
 
-        time.sleep(np.random.uniform(1, 2))
-
         # Click organization div
         org_div = WebDriverWait(self.driver, self.get_web_driver_wait_time()).until(
             EC.element_to_be_clickable((By.XPATH, selectors['org_div']))
         )
         ActionChains(self.driver).click(org_div).perform()
         time.sleep(np.random.uniform(1, 2))
+        self.logger.info("Clicked organization div")
         return True
             
        
@@ -1107,7 +1132,7 @@ class Linkedin:
     def search_org_no_limit(self, org_name):
         selectors = {
             
-            'alumni_tab': "//div[@class='inline-block']//span[contains(., 'alumni')]",
+            'alumni_tab': "//div[@class='inline-block']/a[span[contains(., 'alumni')]]",
             'employees_tab': "//div[@class='org-top-card-summary-info-list']//a",
             'connection_2nd': "//ul[contains(@class, 'inline-flex')]/li/button[contains(., '2nd')]",
             'connection_3rd': "//ul[contains(@class, 'inline-flex')]/li/button[contains(., '3rd')]"
@@ -1195,7 +1220,7 @@ class Linkedin:
 
     @retry_with_delay(
             max_retries=3, delay=10, error_msg="Failed to connect to alumni",
-            exceptions_to_raise=(ReachedLimitException, ReachedDailyLimitSetException, NoConnectionException, LastPageException),
+            exceptions_to_raise=(ReachedWeeklyLimitException, ReachedDailyLimitSetException, NoConnectionException, LastPageException),
             call_func=lambda self: self.driver.refresh())
     def connect_to_alumni(self):
         selectors = {
@@ -1334,8 +1359,8 @@ class Linkedin:
 
                                     time.sleep(np.random.uniform(0.5, 1))
                                     self.logger.info("Reached weekly connection limit")
-                                    raise ReachedLimitException("Reached connection limit")
-                                except ReachedLimitException:
+                                    raise ReachedWeeklyLimitException("Reached connection limit")
+                                except ReachedWeeklyLimitException:
                                     raise
                                 except:
                                     pass
@@ -1350,7 +1375,7 @@ class Linkedin:
                         self.logger.info("Reached daily connection limit")
                         raise ReachedDailyLimitSetException("Reached daily connection limit")
 
-                except (ReachedLimitException, ReachedDailyLimitSetException) as e:
+                except (ReachedWeeklyLimitException, ReachedDailyLimitSetException) as e:
                     raise
                 except Exception as e:
                     self.logger.warning(f"Error in connect_to_alumni: {str(e)}")
