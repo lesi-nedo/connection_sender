@@ -25,10 +25,9 @@ from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium_stealth import stealth
-from selenium.webdriver.common.action_chains import ActionChains, ActionBuilder
+from selenium.webdriver.common.action_chains import ActionChains
 from selenium.common.exceptions import TimeoutException, WebDriverException, StaleElementReferenceException
 from selenium.webdriver.remote.webdriver import WebDriver
-from webdriver_manager.chrome import ChromeDriverManager
 
 
 
@@ -53,7 +52,7 @@ from exceptions import (
     LastPageException, WebSessionExpired, NoCardWithPeopleException
 )
 from .utils import (
-    extract_number_from_text, get_week_number, remove_files_in_directory, check_internet_connection,
+    extract_number_from_text, get_week_number, remove_files_in_directory,
     retry_with_delay
 )
 
@@ -462,7 +461,7 @@ class Linkedin:
                     # Try JavaScript click if regular click fails
                     ActionChains(self.driver).click(clickable_button).perform()
                     
-                    time.sleep(np.random.randint(1, 3))
+                    time.sleep(np.random.uniform(1, 3))
                     
                     # Wait and click confirm withdraw button
                     confirm_button = WebDriverWait(self.driver, self.get_web_driver_wait_time()).until(
@@ -470,7 +469,7 @@ class Linkedin:
                     )
                     ActionChains(self.driver).click(confirm_button).perform()
                     
-                    time.sleep(np.random.randint(1.5, 3.5))
+                    time.sleep(np.random.uniform(1.5, 3.5))
                     self.logger.info("Connection withdrawn")
                     
                 except Exception as e:
@@ -543,6 +542,7 @@ class Linkedin:
                             previous_button
                         )
                         ActionChains(self.driver).click(previous_button).perform()
+                        time.sleep(np.random.uniform(2, 4))
                     except Exception as e:
                         self.logger.info("Reached first page -- Error type: {e.__class__.__name__}")
                         return
@@ -698,7 +698,7 @@ class Linkedin:
                                 EC.element_to_be_clickable((By.XPATH, "//button[@aria-label='Dismiss']"))
                             )
                             ActionChains(self.driver).click(close_button).perform()
-                            time.sleep(1)
+                            time.sleep(np.random.uniform(1, 3))
                     except TimeoutException:
                         pass  # No modal present
 
@@ -727,6 +727,7 @@ class Linkedin:
             if input_checkbox.is_selected():
                 self.logger.info("Remember me checkbox is unselected")
                 ActionChains(self.driver).click(label).perform()
+                time.sleep(np.random.uniform(1, 3))
         except:
             return
         
@@ -762,6 +763,7 @@ class Linkedin:
                         EC.element_to_be_clickable((By.XPATH, resend_button_xpath))
                     )
                     ActionChains(self.driver).click(resend_button).perform()
+                    time.sleep(np.random.uniform(1, 3))
                 else:
                     break
             time.sleep(np.random.uniform(4, 7))
@@ -803,6 +805,7 @@ class Linkedin:
                 # self.human_like_mouse_move(cookie_button)
                 
                 ActionChains(self.driver).click(cookie_button).perform()
+                time.sleep(np.random.uniform(1, 2))
                 
                 # Verify popup is gone
                 WebDriverWait(self.driver, self.get_web_driver_wait_time()).until_not(
@@ -1112,6 +1115,7 @@ class Linkedin:
             # self.human_like_mouse_move(people_tab)
             ActionChains(self.driver).click(people_tab).perform()
             self.logger.info("Clicked people tab")
+            time.sleep(np.random.uniform(1.5, 3.0))
         except:
             try:
                 alumni_tab = WebDriverWait(self.driver, self.get_web_driver_wait_time()).until(
@@ -1120,6 +1124,7 @@ class Linkedin:
                 # self.human_like_mouse_move(alumni_tab)
                 ActionChains(self.driver).click(alumni_tab).perform()
                 self.logger.info("Clicked alumni tab")
+                time.sleep(np.random.uniform(1.5, 3.0))
             except TimeoutException:
                 self.logger.warning(f"Neither people nor alumni tab found: {org_name} ")
                 self.write_response(self.driver.page_source, "error_tabs_with_limit.html")
@@ -1148,6 +1153,7 @@ class Linkedin:
             )
             # self.human_like_mouse_move(alumni_tab)
             ActionChains(self.driver).click(alumni_tab).perform()
+            time.sleep(np.random.uniform(2, 4))
         except TimeoutException:
             try:
                 employees_tab = WebDriverWait(self.driver, self.get_web_driver_wait_time()).until(
@@ -1155,6 +1161,7 @@ class Linkedin:
                 )
                 # self.human_like_mouse_move(employees_tab)
                 ActionChains(self.driver).click(employees_tab).perform()
+                time.sleep(np.random.uniform(2, 4))
             except TimeoutException:
                 self.logger.warning(f"Neither alumni nor employees tab found: {org_name} ")
                 self.write_response(self.driver.page_source, "error_tabs_no_limit.html")
@@ -1196,6 +1203,7 @@ class Linkedin:
             # self.human_like_mouse_move(button)
             
             ActionChains(self.driver).click(button).perform()
+            time.sleep(np.random.uniform(1, 2))
             
             # Verify card disappeared
             WebDriverWait(self.driver, self.get_web_driver_wait_time()).until(
@@ -1284,12 +1292,12 @@ class Linkedin:
                     
                     # Scroll into view
                     self.driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});", clickable_button)
-                    time.sleep(np.random.uniform(1.5, 7.5))
+                    time.sleep(np.random.uniform(1.5, 4.5))
                     
                     # Try JavaScript click if regular click fails
                     ActionChains(self.driver).click(clickable_button).perform()
                     
-                    time.sleep(np.random.uniform(0.5, 4))
+                    time.sleep(np.random.uniform(1.5, 4))
                     try:
                         clickable_button = WebDriverWait(self.driver, self.get_web_driver_wait_time()).until(
                             EC.element_to_be_clickable((By.XPATH, selectors['button_send1']))
@@ -1323,7 +1331,7 @@ class Linkedin:
                         self.logger.info("Found dismiss button, clicking it")
                         ActionChains(self.driver).click(dismiss_button).perform()
 
-                        time.sleep(np.random.uniform(0.5, 1))
+                        time.sleep(np.random.uniform(1.5, 2.5))
                     except TimeoutException:
                         self.logger.debug("No dismiss button found")
                         pass
@@ -1339,6 +1347,7 @@ class Linkedin:
                             )
                             self.logger.info("Found growing network message popup")
                             ActionChains(self.driver).click(growing_popup).perform()
+                            time.sleep(np.random.uniform(1.5, 2.5))
                         except TimeoutException as e:
                             try:
                                 close_to_reach_limit_button = WebDriverWait(self.driver, self.get_web_driver_wait_time()).until(
@@ -1346,7 +1355,7 @@ class Linkedin:
                                 )
                                 self.logger.info("Found close to reach limit button, clicking it")
                                 ActionChains(self.driver).click(close_to_reach_limit_button).perform()
-
+                                time.sleep(np.random.uniform(1.5, 2.5))
                             except TimeoutException as e:
                                 try:
                                     reached_limit_button = WebDriverWait(self.driver, self.get_web_driver_wait_time()).until(
@@ -1357,7 +1366,7 @@ class Linkedin:
 
                                     ActionChains(self.driver).click(reached_limit_button).perform()
 
-                                    time.sleep(np.random.uniform(0.5, 1))
+                                    time.sleep(np.random.uniform(1.5, 2.5))
                                     self.logger.info("Reached weekly connection limit")
                                     raise ReachedWeeklyLimitException("Reached connection limit")
                                 except ReachedWeeklyLimitException:
@@ -1563,6 +1572,7 @@ class Linkedin:
             )
             ActionChains(self.driver).click(submit_pin).perform()
             self.logger.info("Submitted email verification code")
+            time.sleep(np.random.uniform(1.5, 2.5))
             return True
         except:
             self.logger.info("No email verification code required")
@@ -1604,8 +1614,9 @@ class Linkedin:
             )
             
             # Click verify with retry
-            for click_attempt in range(2):
+            for _ in range(2):
                 ActionChains(self.driver).click(verify_button).perform()
+                time.sleep(np.random.uniform(1, 2))
                 break
             
             self.logger.info("Clicked verify button")
@@ -1700,7 +1711,8 @@ class Linkedin:
                 )
                 
                 ActionChains(self.driver).click(submit_button).perform()
-                
+                time.sleep(np.random.uniform(1, 2))
+    
                 self.logger.info("Submitted phone number")
 
                 # Check for error message
@@ -1744,6 +1756,8 @@ class Linkedin:
                 )
                 
                 ActionChains(self.driver).click(submit_button).perform()
+                time.sleep(np.random.uniform(1, 2))
+                self.logger.info("Submitted verification code")
 
                 # Verify success by waiting for error message absence
                 try:
@@ -1817,7 +1831,7 @@ class Linkedin:
                 ActionChains(self.driver).click(image).perform()
                 self.logger.info(f"Clicked image {response}")
 
-                time.sleep(np.random.uniform(0.5, 1))
+                time.sleep(np.random.uniform(1.5, 3))
                 try:
                     try_again = waiter.until(
                         EC.element_to_be_clickable((By.XPATH, SELECTORS["try_again"]))
@@ -2196,8 +2210,6 @@ class Linkedin:
                 except:
                     pass
                         
-        return None
-
     def human_like_mouse_move(self, element, num_control_points=3):
         """
         Moves mouse in a human-like way to element with bounds checking
@@ -2300,6 +2312,7 @@ class Linkedin:
 
             # Move mouse with dynamic speed
             actions = ActionChains(self.driver)
+            time.sleep(np.random.uniform(0.2, 0.4))
             current_x, current_y = start_x, start_y
             
             for idx, (x, y) in enumerate(path):
