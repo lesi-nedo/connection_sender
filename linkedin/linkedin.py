@@ -582,7 +582,7 @@ class Linkedin:
             raise e
 
     @retry_with_delay(max_retries=3, delay=10, error_msg="Could not click next page button", call_func=lambda self: self.driver.refresh())
-    def click_next_page(self, next_page_button, max_retries=3):
+    def click_next_page(self, next_page_button):
         self.logger.info("Clicking next page button")
           
         # Find and scroll to next button
@@ -649,7 +649,6 @@ class Linkedin:
 
         self.logger.info("Checking if card with connectable people exists")
         self._helper_check_card(results_container)
-
         try:
             last_page_button = WebDriverWait(self.driver, self.get_web_driver_wait_time()).until(
                 EC.element_to_be_clickable((By.XPATH, last_page_but_xpath))
@@ -657,9 +656,10 @@ class Linkedin:
             last_page = int(last_page_button.text)
             self.logger.info(f"Found {last_page} pages")
         except:
+            self.logger.info("Only one page found")
             last_page = 1
         pages_before_quit = int(os.getenv("PAGES_BEFORE_QUIT"))
-        for page in range(pages_before_quit):
+        for page in range(1, pages_before_quit+1):
 
             try:
                 # Wait for withdraw buttons on current page
@@ -701,7 +701,10 @@ class Linkedin:
                             time.sleep(np.random.uniform(1, 3))
                     except TimeoutException:
                         pass  # No modal present
-
+                    
+                    if page == last_page:
+                        self.logger.info("Reached last page")
+                        return
                     self.click_next_page(next_page_button)
                     
                 except:
