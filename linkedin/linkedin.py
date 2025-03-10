@@ -581,7 +581,7 @@ class Linkedin:
             self.logger.error(f"Error in withdraw generator: {str(e)}")
             raise e
 
-    @retry_with_delay(max_retries=3, delay=10, error_msg="Could not click next page button", call_func=lambda self: self.driver.refresh())
+    @retry_with_delay(max_retries=3, delay=10, exceptions_to_raise=(NoConnectionException,), error_msg="Could not click next page button", call_func=lambda self: self.driver.refresh())
     def click_next_page(self, next_page_button):
         self.logger.info("Clicking next page button")
           
@@ -592,12 +592,14 @@ class Linkedin:
         self.driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});", next_button)
         time.sleep(np.random.uniform(0.5, 1.5))
         
-    
-        next_button = WebDriverWait(self.driver, self.get_web_driver_wait_time()).until(
-            EC.element_to_be_clickable((By.XPATH, next_page_button))
-        )
-        ActionChains(self.driver).click(next_button).perform()
-        
+        try:
+            next_button = WebDriverWait(self.driver, self.get_web_driver_wait_time()).until(
+                EC.element_to_be_clickable((By.XPATH, next_page_button))
+            )
+            ActionChains(self.driver).click(next_button).perform()
+        except Exception as e:
+            self.logger.warning(f"Next page button not found: {str(e)}")
+            raise NoConnectionException("Next page button not found")
         self.logger.info("Clicked next page button")
         time.sleep(np.random.uniform(2, 4))
         return

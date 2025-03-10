@@ -29,8 +29,9 @@ The file must have: `org_name` columns. The bot will stop when the daily set lim
 1. Clone the repository:
 
     ```bash
-    git clone https://github.com/yourusername/linkedin-bot.git
-    cd linkedin-bot
+    wget https://github.com/lesi-nedo/connection_sender/archive/refs/heads/main.zip
+    unzip main.zip && rm main.zip
+    cd connection_sender-main
     ```
 2. Download and Install 'google-chrome' stable package
 
