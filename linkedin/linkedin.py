@@ -922,8 +922,10 @@ class Linkedin:
         except AccountRestrictedException:
             raise
         finally:
+            time.sleep(np.random.uniform(1, 2))
             if "Sign In" in driver.title:
                 self.logger.error("Still on login page")
+                self.write_response(driver.page_source, "error_login.html")
                 raise LoginException("Failed to login")
         
 
