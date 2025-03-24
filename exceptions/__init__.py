@@ -12,6 +12,7 @@ from .ReachedWithdrawLimitException import ReachedWithdrawLimitException
 from .LastPageException import LastPageException
 from .WebSessionExpired import WebSessionExpired
 from .NoCardWithPeopleException import NoCardWithPeopleException
+from .FailedAfterRetriesException import FailedAfterRetriesException
 
 
 __all__ = [
@@ -28,5 +29,6 @@ __all__ = [
     'ReachedWithdrawLimitException',
     'LastPageException',
     'WebSessionExpired',
-    'NoCardWithPeopleException'
+    'NoCardWithPeopleException',
+    'FailedAfterRetriesException'
 ]

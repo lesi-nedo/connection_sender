@@ -348,12 +348,9 @@ class Linkedin:
                     message = None
                     if hasattr(e, "msg"):
                         message = e.msg
-                    self.logger.error(f"Error in send_connection_request. {str(message)}")
-                    raise e
-        except Exception as e:
-            self.self.logger.error(f"Error sending connection request: {e}")
-            self.send_error_email(str(e))
-            raise
+                    self.logger.error(f"Error in send_connection_request. Message: {str(message)}")
+                    self.send_error_email(f"Error in send_connection_request: {str(message)}")
+                    return
         finally:
             for org, sent in self.sent_connections_org.items():
                     if sent > 5: # if an organization has more than 5 connections sent, remove it from the list of orgs to be chosen next time
@@ -584,19 +581,15 @@ class Linkedin:
     @retry_with_delay(max_retries=3, delay=10, exceptions_to_raise=(NoConnectionException,), error_msg="Could not click next page button", call_func=lambda self: self.driver.refresh())
     def click_next_page(self, next_page_button):
         self.logger.info("Clicking next page button")
-          
-        # Find and scroll to next button
-        next_button = WebDriverWait(self.driver, self.get_web_driver_wait_time()).until(
-            EC.visibility_of_element_located((By.XPATH, next_page_button))
-        )
-        self.driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});", next_button)
-        time.sleep(np.random.uniform(0.5, 1.5))
-        
+                  
         try:
             next_button = WebDriverWait(self.driver, self.get_web_driver_wait_time()).until(
-                EC.element_to_be_clickable((By.XPATH, next_page_button))
+                EC.visibility_of_element_located((By.XPATH, next_page_button))
             )
+            self.driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});", next_button)
+            time.sleep(np.random.uniform(1.5, 2.5))
             ActionChains(self.driver).click(next_button).perform()
+
         except Exception as e:
             self.logger.warning(f"Next page button not found: {str(e)}")
             raise NoConnectionException("Next page button not found")
@@ -951,6 +944,7 @@ class Linkedin:
 
     def return_home(self):
         self.driver.get(self.home_page)
+        time.sleep(np.random.uniform(2, 4))
 
     def choose_result(self):
         div_xpath = "//div[@aria-label='Search suggestions']"
@@ -1232,11 +1226,24 @@ class Linkedin:
             EC.visibility_of_element_located((By.XPATH, card_xpath))
         )
         return element
+    def _call_on_error_connect_to_alumni(self):
+        self.logger.info("Calling `_call_on_error_connect_to_alumni` method")
+        self.driver.refresh()
+        time.sleep(np.random.uniform(3, 6))
+        self.check_if_app()
+        self.check_if_declinable()
+        self.check_if_feed()
+        self.check_if_need_waiting()
+        self.check_if_restricted()
+        self.check_if_captcha()
+        self.check_if_email_code()
+        self.check_if_phone_number()
 
     @retry_with_delay(
             max_retries=3, delay=10, error_msg="Failed to connect to alumni",
             exceptions_to_raise=(ReachedWeeklyLimitException, ReachedDailyLimitSetException, NoConnectionException, LastPageException),
-            call_func=lambda self: self.driver.refresh())
+            call_func=lambda self: self._call_on_error_connect_to_alumni()
+        )
     def connect_to_alumni(self):
         selectors = {
             'connect_button': "//button[contains(@aria-label, 'Invite') and span[contains(., 'Connect')]]",

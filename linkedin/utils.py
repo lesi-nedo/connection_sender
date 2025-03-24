@@ -8,6 +8,7 @@ from time import sleep
 from functools import wraps
 
 from exceptions import WebSessionExpired
+from exceptions import FailedAfterRetriesException
 
 def extract_number_from_text(text: str, logger) -> int:
     try:
@@ -82,7 +83,7 @@ def check_internet_connection(logger, retries: int = 3, timeout: int = 5) -> boo
     logger.error("No internet connection available")
     return False
 
-def retry_with_delay(max_retries=3, delay=5, raise_if_fail=Exception, error_msg="", exceptions_to_raise=(), call_func=None):
+def retry_with_delay(max_retries=3, delay=5, raise_if_fail=FailedAfterRetriesException, error_msg="", exceptions_to_raise=(), call_func=None):
     def decorator(func):
 
         @wraps(func)
