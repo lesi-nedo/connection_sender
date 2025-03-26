@@ -80,7 +80,9 @@ class Linkedin:
         service = webdriver.ChromeService(executable_path=self.chromedriver_path)
         self.options.binary_location = self.chrome_exec_path
         try:
-            self.driver = webdriver.Chrome(options=self.options, service=service)
+            self.driver = webdriver.Chrome(options=self.options, service=service, keep_alive=True)
+            self.driver.set_script_timeout(120)
+            self.driver.set_page_load_timeout(180)
         except Exception as e:
             self.logger.error(f"Error creating driver: {str(e)}")
             raise e
@@ -146,6 +148,25 @@ class Linkedin:
                     return base_dir.name
             
         return None
+    
+    def reset_driver_if_needed(self):
+        """Detect if driver connection is broken and reset if needed"""
+        try:
+            # Quick test if driver is responsive
+            self.driver.execute_script("return 1")
+            return False  # No reset needed
+        except Exception as e:
+            self.logger.warning(f"Driver connection issue detected: {str(e)}")
+            try:
+                self.driver.quit()
+            except:
+                pass
+            
+            # Recreate driver
+            service = webdriver.ChromeService(executable_path=self.chromedriver_path)
+            self.driver = webdriver.Chrome(options=self.options, service=service)
+            self.logger.info("Driver reset successfully")
+            return True  # Reset performed
 
     def check_if_chromedriver_exists(self):
         chrome_driver_version = None
@@ -219,11 +240,23 @@ class Linkedin:
             self.options.add_argument('--disable-features=VizDisplayCompositor')
             self.options.add_experimental_option("excludeSwitches", ["enable-automation"])
             self.options.add_experimental_option('useAutomationExtension', False)
+        
+        self.options.add_argument('--dns-prefetch-disable')
+        self.options.add_argument('--disable-client-side-phishing-detection')
+        self.options.add_argument('--disable-application-cache')
         self.options.add_argument("--disable-gpu")
         self.options.add_argument('--disable-dev-shm-usage')
         self.options.add_argument('--remote-debugging-port=9222')
         self.options.add_argument("--disable-browser-side-navigation")
-        # disable the AutomationControlled feature of Blink rendering engine
+        self.options.page_load_strategy = 'eager'
+
+        self.options.set_capability('pageLoadStrategy', 'eager')
+        self.options.set_capability('unhandledPromptBehavior', 'accept')
+        self.options.set_capability('timeouts', {
+            'implicit': 10000,
+            'pageLoad': 180000,  # Increase page load timeout
+            'script': 120000     # Increase script timeout
+        })
             
         self.options.add_argument('--disable-blink-features=AutomationControlled')
 
@@ -1659,7 +1692,11 @@ class Linkedin:
             self.logger.info("Captcha successfully resolved")
             return True
                 
-                    
+        except Exception as e:
+            self.logger.warning(f"Connection issue during captcha check: {str(e)}")
+            self.reset_driver_if_needed()
+            raise
+
         finally:
             # Always restore original frame context
             try:
