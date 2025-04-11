@@ -30,8 +30,8 @@ The `run_cron_job.sh` script creates a daily job that runs between 7:00 AM and 9
 1. **Get the code**:
    ```bash
    wget https://github.com/lesi-nedo/connection_sender/archive/refs/tags/v1.0.0.tar.gz
-   unzip main.zip && rm main.zip
-   cd connection_sender-main
+   tar -xvf v1.0.0.tar.gz && rm v1.0.0.tar.gz
+   cd connection_sender-1.0.0
    ```
 
 2. **Install Chrome**:
