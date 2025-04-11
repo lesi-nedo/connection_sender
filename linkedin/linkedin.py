@@ -394,7 +394,7 @@ class Linkedin:
 
     
     @retry_with_delay(max_retries=3, delay=60, error_msg="Could not send error email")
-    def send_error_email(self, error: str, max_retries: int = 3):
+    def send_error_email(self, error: str):
         """
         Sends email notification when an error occurs in the Linkedin bot.
         
@@ -2225,8 +2225,8 @@ class Linkedin:
 
             while (time.time() - start_time) < self.timeout_minutes * 60:
                 try:
-                    imap.select(os.getenv("LINKEDIN_INBOX_FOLDER"))  # Outlook uses uppercase INBOX
-                    # Outlook search criteria syntax
+                    imap.select(os.getenv("LINKEDIN_INBOX_FOLDER"))  
+                  
                     search_criteria = f'(UNSEEN FROM "{os.getenv("EMAIL_LINKEDIN_CODE")}" HEADER "X-LinkedIn-Template" "security_ato_challenge_send_pin")' #  SINCE {datetime.now().strftime("%d-%b-%Y")}
                     self.logger.info("Waiting for security code from Linkedin")
                     _, messages = imap.search(None, search_criteria)

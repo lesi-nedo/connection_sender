@@ -4,8 +4,6 @@ REMOTE_PORT="2222"
 REMOTE_DIR="/opt/bitnami/projects/linkedin"
 PEM_FILE="/home/lesi-nedo/Desktop/website/mywebsite/nedo.pem"
 SSH_OPTIONS="-p $REMOTE_PORT -i $PEM_FILE"
-# REMOTE_STOP_COMMAND="/home/bitnami/stop.sh"
-# REMOTE_RESTART_COMMAND="/home/bitnami/rest.sh"
 REMOTE_VENV_DIR="/home/bitnami/.conda/envs/linkedin"
 PYTHON="python3"
 
