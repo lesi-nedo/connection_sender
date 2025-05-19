@@ -100,6 +100,7 @@ class Linkedin:
         self.num_page = 1
         self.total_pages = 1
         self.timeout_minutes = 960
+        self.MAX_TRIES = 40
         self.viewport_width = self.driver.execute_script("return window.innerWidth;")
         self.viewport_height = self.driver.execute_script("return window.innerHeight;")
         self.captcha_xpath = "//main//h1[contains(., 'Let’s do a quick security check')]"
@@ -150,23 +151,53 @@ class Linkedin:
         return None
     
     def reset_driver_if_needed(self):
-        """Detect if driver connection is broken and reset if needed"""
+        """Detect if driver connection is broken and reset if needed.
+        Attempts to quit the current driver and create a new one with all initial settings.
+        Returns True if a reset was performed, False otherwise.
+        Raises WebDriverException if driver recreation fails.
+        """
         try:
-            # Quick test if driver is responsive
-            self.driver.execute_script("return 1")
+            # A more reliable test for driver responsiveness
+            _ = self.driver.current_url
+            self.logger.debug(f"Driver appears responsive. Current URL: {self.driver.current_url}")
             return False  # No reset needed
-        except Exception as e:
-            self.logger.warning(f"Driver connection issue detected: {str(e)}")
-            try:
+        except WebDriverException as e:
+            self.logger.warning(f"Driver connection issue detected during responsiveness check: {type(e).__name__} - {str(e)}")
+        except Exception as e: # Catch other potential issues (e.g., self.driver is None)
+            self.logger.warning(f"Unexpected issue checking driver responsiveness: {type(e).__name__} - {str(e)}")
+
+        self.logger.info("Attempting to reset and recreate driver...")
+        try:
+            if hasattr(self, 'driver') and self.driver:
                 self.driver.quit()
-            except:
-                pass
-            
-            # Recreate driver
+        except Exception as quit_e:
+            self.logger.error(f"Error quitting existing driver during reset: {str(quit_e)}")
+        
+        try:
+            self.logger.info("Recreating WebDriver instance...")
             service = webdriver.ChromeService(executable_path=self.chromedriver_path)
-            self.driver = webdriver.Chrome(options=self.options, service=service)
-            self.logger.info("Driver reset successfully")
+            self.driver = webdriver.Chrome(options=self.options, service=service, keep_alive=True)
+            self.driver.set_script_timeout(120)
+            self.driver.set_page_load_timeout(180)
+            
+            # Re-apply stealth
+            stealth(self.driver,
+                languages=["en-US", "en"],
+                vendor="Google Inc.",
+                platform="Win32",
+                webgl_vendor="Intel Inc.",
+                renderer="Intel Iris OpenGL Engine",
+                fix_hairline=True,
+            )
+            self.logger.info("Driver reset and re-initialized successfully.")
+            # Optionally, navigate to a known state, e.g., home page, if appropriate for most contexts.
+            # self.driver.get(self.home_page)
+            # time.sleep(np.random.uniform(2,4)) # Allow page to load
             return True  # Reset performed
+        except Exception as recreate_e:
+            self.logger.error(f"Fatal: Failed to recreate driver: {str(recreate_e)}")
+            raise WebDriverException(f"Failed to recreate driver after connection issue: {recreate_e}") from recreate_e
+
 
     def check_if_chromedriver_exists(self):
         chrome_driver_version = None
@@ -324,12 +355,11 @@ class Linkedin:
             raise e
         self.remove_orgs_chosen_from_dt()
         self.logger.info(f"Today will send {self.max_requests_per_day} connection requests")
-        MAX_TRIES = 1000
         curr_try = 0
         try:
-            while curr_try < MAX_TRIES:
+            while curr_try < self.MAX_TRIES:
                 curr_try += 1
-                if curr_try == MAX_TRIES:
+                if curr_try == self.MAX_TRIES:
                     self.logger.error("This should not happen. Reached max tries")
                     self.send_error_email("The bot has a bug. Contact the developer. Include the log file.")
                     return
@@ -345,6 +375,9 @@ class Linkedin:
                     self.logger.info(f"Did we reached the limit in searching for connectable people? {self.reached_limit_search}")
                     if result:
                         self.connect_to_alumni()
+                    else:
+                        time.sleep(np.random.randint(2, 4))
+                        self.reset_driver_if_needed()
                 except LastPageException as e:
                     self.logger.info("Reached last page")
                     self.return_home()
@@ -394,6 +427,7 @@ class Linkedin:
 
     
     @retry_with_delay(max_retries=3, delay=60, error_msg="Could not send error email")
+    @retry_with_delay(max_retries=3, delay=60, error_msg="Could not send error email")
     def send_error_email(self, error: str):
         """
         Sends email notification when an error occurs in the Linkedin bot.
@@ -425,9 +459,11 @@ class Linkedin:
         message.attach(MIMEText(body, "plain"))
 
         # Try to attach screenshot if available
+        screenshot_path_to_remove = None
         try:
             screenshot_path = self.save_centered_screenshot()
             if screenshot_path:
+                screenshot_path_to_remove = screenshot_path # Keep track for removal
                 with open(screenshot_path, 'rb') as f:
                     img_data = f.read()
                     image = MIMEImage(img_data, name=os.path.basename(screenshot_path))
@@ -435,18 +471,29 @@ class Linkedin:
         except Exception as e:
             self.logger.warning(f"Could not attach screenshot: {str(e)}")
 
-        # Send email using SSL
-        with smtplib.SMTP_SSL(os.getenv("SMTP_SERVER_SENDER"), os.getenv("SMTP_PORT_SENDER")) as server:
-            server.login(os.getenv("SENDER"), os.getenv("SENDER_PASS"))
-            server.sendmail(
-                os.getenv("SENDER"),
-                os.getenv("RECEIVER"), 
-                message.as_string()
-            )
-            
-        self.logger.info("Successfully sent error notification email")
+        try:
+            # Create a default SSL context
+            context = ssl.create_default_context()
+
+            # Send email using SSL
+            with smtplib.SMTP_SSL(os.getenv("SMTP_SERVER_SENDER"), os.getenv("SMTP_PORT_SENDER"), context=context) as server:
+                server.login(os.getenv("SENDER"), os.getenv("SENDER_PASS"))
+                server.sendmail(
+                    os.getenv("SENDER"),
+                    os.getenv("RECEIVER"), 
+                    message.as_string()
+                )
+                
+            self.logger.info("Successfully sent error notification email")
+        finally:
+            if screenshot_path_to_remove and os.path.exists(screenshot_path_to_remove):
+                try:
+                    os.remove(screenshot_path_to_remove)
+                    self.logger.info(f"Removed temporary screenshot: {screenshot_path_to_remove}")
+                except OSError as e:
+                    self.logger.error(f"Error removing screenshot {screenshot_path_to_remove}: {e}")
         return
-            
+
     
     def get_number_withdrawable(self, button_xpath):
         button = self.driver.find_element(By.XPATH, button_xpath)
@@ -538,8 +585,9 @@ class Linkedin:
                 raise e
 
             curr_page = last_page
-
-            while True:
+            count = 0
+            while count < self.MAX_TRIES:
+                count += 1
                 try:
                     time.sleep(np.random.uniform(2.5, 5))
             
@@ -782,7 +830,9 @@ class Linkedin:
                 EC.visibility_of_element_located((By.XPATH, h1_app_xpath))
             )
             self.logger.warning("Authorization needed by LinkedIn app")
-            while True:
+            count = 0
+            while count < self.MAX_TRIES:
+                count += 1
                 self.send_email("Authorization needed by LinkedIn app. Resend the request: [Yes/No]? (If not correct will assume no.)", "Linkedin Bot - Authorization Needed")
                 message = self.waiting_for_confirmation_email()
                 if not message:
@@ -1023,7 +1073,7 @@ class Linkedin:
     def _search_common(self, org_name):
         selectors = {
             'search_input': "//input[@type='text' and @placeholder='Search']",
-            'company_button': "//div[@id='search-reusables__filters-bar']/ul/li/button[contains(., 'Companies')]",
+            'company_button': "//div[@id='search-reusables__filters-bar']//button[contains(., 'Companies')]",
             'org_div': "//ul[@role = 'list']/li[1]/div/div[contains(@class, 'cursor-pointer')]",
             'org_div_no_comp': "//div[.//span[contains(., 'followers')]]/a[contains(@href, 'company')] | //div[.//span[contains(., 'followers')]]/a[contains(@href, 'school')]",
             'no_found_company': "//h2[contains(., 'No results found')]",
@@ -1078,7 +1128,7 @@ class Linkedin:
             self.logger.info("No more organizations to search")
             return False
         search_element.send_keys(Keys.RETURN)
-        time.sleep(np.random.uniform(1, 2))
+        time.sleep(np.random.uniform(3, 5))
         
         try:
             # Wait for company filter button
@@ -1271,6 +1321,7 @@ class Linkedin:
         self.check_if_captcha()
         self.check_if_email_code()
         self.check_if_phone_number()
+        self.reset_driver_if_needed()
 
     @retry_with_delay(
             max_retries=3, delay=10, error_msg="Failed to connect to alumni",
@@ -1466,7 +1517,8 @@ class Linkedin:
         message.attach(MIMEText(body, "plain"))
 
         # Send email using SSL
-        with smtplib.SMTP_SSL(os.getenv("SMTP_SERVER_SENDER"), os.getenv("SMTP_PORT_SENDER")) as server:
+        context = ssl.create_default_context()
+        with smtplib.SMTP_SSL(os.getenv("SMTP_SERVER_SENDER"), os.getenv("SMTP_PORT_SENDER"), context=context) as server:
             server.login(os.getenv("SENDER"), os.getenv("SENDER_PASS"))
             server.sendmail(
                 os.getenv("SENDER"),
@@ -1922,7 +1974,7 @@ class Linkedin:
         finally:
             self.driver.switch_to.default_content()
 
-    @retry_with_delay(max_retries=3, delay=10, error_msg="Failed to save centered screenshot")
+    @retry_with_delay(max_retries=3, delay=10, error_msg="Failed to save centered screenshot", call_func=lambda self: self._call_on_error_connect_to_alumni())
     def save_centered_screenshot(self, padding=250):
         try:
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
@@ -1962,13 +2014,15 @@ class Linkedin:
 
     @retry_with_delay(max_retries=3, delay=30, error_msg="Failed to send email")
     def send_email(self, message_to_send=None, subject:str = "Linkedin Bot - Captcha to Solve"):
+            screenshot_path = None # Initialize screenshot_path
             try:
                 self.see_all_emails_captcha()
 
                 screenshot_path = self.save_centered_screenshot()
                 if not screenshot_path:
                     self.logger.error("Error saving screenshot")
-                    raise Exception("Error saving screenshot")
+                    # Not raising an exception here to allow email sending attempt without screenshot
+                    # raise Exception("Error saving screenshot") # Original behavior
 
                 message = MIMEMultipart()
                 message["From"] = os.getenv("SENDER")
@@ -1979,18 +2033,29 @@ class Linkedin:
                 final_message += f"\n\n--------------------------------------\n\n{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
                 message.attach(MIMEText(final_message, "plain"))
 
-                with open(screenshot_path, 'rb') as f:
-                    img_data = f.read()
-                    image = MIMEImage(img_data, name=os.path.basename(screenshot_path))
-                    message.attach(image)
+                if screenshot_path and os.path.exists(screenshot_path): # Check if screenshot was successfully created
+                    with open(screenshot_path, 'rb') as f:
+                        img_data = f.read()
+                        image = MIMEImage(img_data, name=os.path.basename(screenshot_path))
+                        message.attach(image)
+                else:
+                    self.logger.warning("Screenshot not available or path is invalid, sending email without it.")
 
-                with smtplib.SMTP_SSL(os.getenv("SMTP_SERVER_SENDER"), os.getenv("SMTP_PORT_SENDER")) as server:
+
+                context = ssl.create_default_context()
+                with smtplib.SMTP_SSL(os.getenv("SMTP_SERVER_SENDER"), os.getenv("SMTP_PORT_SENDER"), context=context) as server:
                     server.login(os.getenv("SENDER"), os.getenv("SENDER_PASS"))
                     server.sendmail(os.getenv("SENDER"), os.getenv("RECEIVER"), message.as_string())
                     self.logger.info("Successfully sent email")
                 return True
             finally:
-                os.remove(screenshot_path)
+                if screenshot_path and os.path.exists(screenshot_path): # Ensure screenshot_path exists before trying to remove
+                    try:
+                        os.remove(screenshot_path)
+                        self.logger.info(f"Removed temporary screenshot: {screenshot_path}")
+                    except OSError as e:
+                        self.logger.error(f"Error removing screenshot {screenshot_path}: {e}")
+
 
     def get_email_text(self, message):
         # If message is string, return directly
