@@ -51,7 +51,7 @@ The `run_cron_job.sh` script creates a daily job that runs between 7:00 AM and 9
    wget https://storage.googleapis.com/chrome-for-testing-public/{YOUR_VERSION}/linux64/chromedriver-linux64.zip
    unzip chromedriver-linux64.zip
    sudo mv chromedriver-linux64/chromedriver /usr/local/bin/
-   rm -d chromedriver-linux64 chromedriver-linux64.zip
+   rm -rd chromedriver-linux64 chromedriver-linux64.zip
    ```
 
 5. **Install virtual display**:
