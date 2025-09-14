@@ -1,5 +1,5 @@
 REMOTE_USER="bitnami"
-REMOTE_IP="3.67.160.120"
+REMOTE_IP="3.127.204.62"
 REMOTE_PORT="2222"
 REMOTE_DIR="/opt/bitnami/projects/linkedin"
 PEM_FILE="/home/lesi-nedo/Desktop/repositories/website/mywebsite/nedo.pem"
@@ -65,7 +65,6 @@ check_pem_file() {
   fi
 }
 
-
 echo "Starting file transfer to remote machine using rsync..."
 
 # Call the check_pem_file function
@@ -86,3 +85,4 @@ done
 set +e
 
 echo "File transfer complete"
+

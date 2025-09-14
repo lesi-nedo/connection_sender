@@ -1,0 +1,25 @@
+[project]
+name = "linkedin"
+version = "0.1.0"
+description = "Linkeding bot"
+authors = [
+    {name = "Oleksiy Nedobiychuk",email = "oleksiy12345@live.it"}
+]
+license = {text = "Apache V2.0"}
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "selenium (==4.27.1)",
+    "webdriver-manager (==4.0.2)",
+    "python-dotenv (==1.0.1)",
+    "requests (==2.32.3)",
+    "beautifulsoup4 (==4.12.3)",
+    "pandas (==2.2.3)",
+    "pillow (==11.0.0)",
+    "selenium-stealth (==1.0.6)"
+]
+
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"

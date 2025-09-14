@@ -116,7 +116,7 @@ class Linkedin:
         self.perc_to_withdraw = 0.5
         self.min_connections_pending = int(os.getenv("MIN_CONNECTIONS_PENDING"))
         self.MIN_CONNECTION_WITHDRAWABLE = 3
-        self.button_tot_withdrawable = "//button[@id='mn-invitation-manager__invitation-facet-pills--CONNECTION']"
+        self.span_toto_withdrawble = "//button/span[contains(.,'People')]"
         self.filename_week = "reached_limit_week"
         self.filename_day = "reached_limit_day"
         self.file_extension = ".txt"
@@ -218,6 +218,8 @@ class Linkedin:
             if match:
                 chrome_driver_version = match.group(1)
         path_ = os.getenv("CHROME_EXEC_PATH") or "/usr/bin/google-chrome"
+        if not os.path.exists(path_):
+            path_ = "/usr/bin/google-chrome-stable"
         if not os.path.exists(path_):
             base_dir = Path.home() / ".cache" / "selenium" / "chrome" / chrome_driver_version
             if base_dir.exists():
@@ -495,11 +497,14 @@ class Linkedin:
         return
 
     
-    def get_number_withdrawable(self, button_xpath):
-        button = self.driver.find_element(By.XPATH, button_xpath)
-        span = button.find_element(By.XPATH, ".//span")
-        span_text = span.text
-        num_connections_pending = extract_number_from_text(span_text, self.logger)
+    def get_number_withdrawable(self, xpath_span):
+        try:
+            span = self.driver.find_element(By.XPATH, xpath_span)
+            span_text = span.text
+            num_connections_pending = extract_number_from_text(span_text, self.logger)
+        except Exception as e:
+            self.logger.error(f"Error finding withdrawable connections: {str(e)}")
+            num_connections_pending = 0
         return num_connections_pending
             
     def withdraw_connection(self):
@@ -507,157 +512,88 @@ class Linkedin:
         self.login()
         self.driver.get(url)
         time.sleep(np.random.randint(3, 5))
-        num_connections_pending = self.get_number_withdrawable(self.button_tot_withdrawable)   
+        num_connections_pending = self.get_number_withdrawable(self.span_toto_withdrawble)   
         withdraw_button = "//button[contains(., 'Withdraw')]"
 
         if num_connections_pending < self.min_connections_pending:
             self.logger.info("Number of connections pending is less than minimum connections pending")
             return
 
-        for all_withdraw_buttons in self.withdraw_conn_generator(withdraw_button, num_connections_pending):
-            array_len = len(all_withdraw_buttons)
+        all_withdraw_buttons = self.withdraw_conn_generator(withdraw_button)
+        array_len = len(all_withdraw_buttons)
 
-            if array_len <= self.MIN_CONNECTION_WITHDRAWABLE:
-                self.logger.info(f"Less than {self.MIN_CONNECTION_WITHDRAWABLE} connections to withdraw per page.")
+        if array_len <= self.MIN_CONNECTION_WITHDRAWABLE:
+            self.logger.info(f"Less than {self.MIN_CONNECTION_WITHDRAWABLE} connections to withdraw per page.")
+            return
+        num_elemnts = int( array_len* self.withdraw_perc_per_page)
+        indeces = np.random.choice(array_len, num_elemnts, replace=False)
+        all_withdraw_buttons = [all_withdraw_buttons[i] for i in indeces]
+
+        for withdraw_button in all_withdraw_buttons:
+            try:
+                # Wait for button to be clickable
+                clickable_button = WebDriverWait(self.driver, self.get_web_driver_wait_time()).until(
+                    EC.element_to_be_clickable(withdraw_button)
+                )
+                
+                # Scroll into view
+                self.driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});", clickable_button)
+                time.sleep(np.random.uniform(1.5, 3.5))
+                
+                # Try JavaScript click if regular click fails
+                ActionChains(self.driver).click(clickable_button).perform()
+                
+                time.sleep(np.random.uniform(1, 3))
+                
+                # Wait and click confirm withdraw button
+                confirm_button = WebDriverWait(self.driver, self.get_web_driver_wait_time()).until(
+                    EC.element_to_be_clickable((By.XPATH, "//button[contains(., 'Withdraw')]"))
+                )
+                ActionChains(self.driver).click(confirm_button).perform()
+                
+                time.sleep(np.random.uniform(1.5, 3.5))
+                self.logger.info("Connection withdrawn")
+                
+            except Exception as e:
+                self.logger.error(f"Error in withdraw: {str(e)}")
+                self.write_response(self.driver.page_source, "error_withdraw.html")
                 continue
-            num_elemnts = int( array_len* self.withdraw_perc_per_page)
-            indeces = np.random.choice(array_len, num_elemnts, replace=False)
-            all_withdraw_buttons = [all_withdraw_buttons[i] for i in indeces]
-    
-            for withdraw_button in all_withdraw_buttons:
-                try:
-                    # Wait for button to be clickable
-                    clickable_button = WebDriverWait(self.driver, self.get_web_driver_wait_time()).until(
-                        EC.element_to_be_clickable(withdraw_button)
-                    )
-                    
-                    # Scroll into view
-                    self.driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});", clickable_button)
-                    time.sleep(np.random.uniform(1.5, 3.5))
-                    
-                    # Try JavaScript click if regular click fails
-                    ActionChains(self.driver).click(clickable_button).perform()
-                    
-                    time.sleep(np.random.uniform(1, 3))
-                    
-                    # Wait and click confirm withdraw button
-                    confirm_button = WebDriverWait(self.driver, self.get_web_driver_wait_time()).until(
-                        EC.element_to_be_clickable((By.XPATH, "//button[contains(., 'Withdraw')]"))
-                    )
-                    ActionChains(self.driver).click(confirm_button).perform()
-                    
-                    time.sleep(np.random.uniform(1.5, 3.5))
-                    self.logger.info("Connection withdrawn")
-                    
-                except Exception as e:
-                    self.logger.error(f"Error in withdraw: {str(e)}")
-                    self.write_response(self.driver.page_source, "error_withdraw.html")
-                    continue
-        self.logger.info("All connections withdrawn")
+        self.logger.info("Finished withdrawing connections")
 
-    def withdraw_conn_generator(self, button_xpath, starting_withdrawable):
+    def withdraw_conn_generator(self, button_xpath):
         """
         Generator that yields withdraw buttons with stale element handling
         """
-        last_page_but_xpath = "(//button[not(@disabled) and contains(@aria-label, 'Page ')])[last()]"
-        previous_page_button_xpath = "//button[not(@disabled) and @aria-label='Previous']"
-        next_page_button_xpath = "//button[not(@disabled) and @aria-label='Next']"
-        time.sleep(3)
+        load_more_butto_xpath = "//button[span[contains(.,'Load more')]]"
         
+
         try:
-            # Get last page number
-            try:
-                
-                next_page_button = WebDriverWait(self.driver, self.get_web_driver_wait_time()).until(
-                    EC.visibility_of_element_located((By.XPATH, next_page_button_xpath))
+            while True:
+                self.driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+                time.sleep(np.random.uniform(1, 2))
+                load_more_button = WebDriverWait(self.driver, self.get_web_driver_wait_time()).until(
+                    EC.element_to_be_clickable((By.XPATH, load_more_butto_xpath))
                 )
-                self.driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});", next_page_button)
-
-                last_page_button = WebDriverWait(self.driver, self.get_web_driver_wait_time()).until(
-                    EC.visibility_of_element_located((By.XPATH, last_page_but_xpath))
-                )
-                last_page = int(last_page_button.text)
-                self.logger.info(f"Found {last_page} pages")
-                ActionChains(self.driver).click(last_page_button).perform()
-                # Click last page
-            except Exception as e:
-                self.logger.warning(f"Error finding last page button. This should not happen. ({str(e)})")
-                raise e
-
-            curr_page = last_page
-            count = 0
-            while count < self.MAX_TRIES:
-                count += 1
-                try:
-                    time.sleep(np.random.uniform(2.5, 5))
-            
-                    # Re-fetch buttons on each iteration
-                    all_buttons = WebDriverWait(self.driver, self.get_web_driver_wait_time()).until(
-                        EC.visibility_of_any_elements_located((By.XPATH, button_xpath))
-                    )
-                    # Ensure buttons are visible
-                    visible_buttons = []
-                    for button in all_buttons:
-                        try:
-                            if button.is_displayed() and button.is_enabled():
-                                visible_buttons.append(button)
-                        except StaleElementReferenceException:
-                            continue
-
-                    self.logger.info(f"Found {len(visible_buttons)} withdraw buttons")
-                    time.sleep(np.random.uniform(1, 3))
-                    
-                    if visible_buttons:
-                        yield visible_buttons
-
-                    # Navigate to previous page
-                    try:
-                        previous_button = WebDriverWait(self.driver, self.get_web_driver_wait_time()).until(
-                            EC.element_to_be_clickable((By.XPATH, previous_page_button_xpath))
-                        )
-                        self.driver.execute_script(
-                            "arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});", 
-                            previous_button
-                        )
-                        ActionChains(self.driver).click(previous_button).perform()
-                        time.sleep(np.random.uniform(2, 4))
-                    except Exception as e:
-                        self.logger.info("Reached first page -- Error type: {e.__class__.__name__}")
-                        return
-
-                    curr_page -= 1
-                    if curr_page == 0:
-                        self.logger.info("Reached first page")
-                        return
-
-                    # Wait for page transition
-                    next_page_button =  WebDriverWait(self.driver, self.get_web_driver_wait_time()).until(
-                        EC.visibility_of_element_located((By.XPATH, next_page_button_xpath))
-                    )
-                    self.driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});", next_page_button)
-                    time.sleep(np.random.uniform(2, 5))
-
-                    # Check withdraw count
-                    curr_num_withdrawable = self.get_number_withdrawable(
-                        self.button_tot_withdrawable
-                    )
-                    if curr_num_withdrawable == 0:
-                        self.logger.info("No more connections to withdraw")
-                        return
-                    
-                    if curr_num_withdrawable < int(starting_withdrawable * self.perc_to_withdraw):
-                        self.logger.info(f"Withdrew {self.perc_to_withdraw*100}% connections")
-                        raise ReachedWithdrawLimitException("Reached withdraw limit: {self.perc_to_withdraw*100}%")
-
-                except StaleElementReferenceException:
-                    self.logger.warning("Stale elements encountered, retrying page...")
-                    self.driver.refresh()
-                    time.sleep(2)
-                    continue
-
+                self.driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});", load_more_button)
+                ActionChains(self.driver).click(load_more_button).perform()
+                time.sleep(np.random.uniform(0.3, 0.8))
+        except TimeoutException:
+            self.logger.info("No more load more button")
         except Exception as e:
-            self.logger.error(f"Error in withdraw generator: {str(e)}")
-            raise e
+            self.logger.error(f"Error clicking load more button: {str(e)}")
+            
+        try:
+            all_withdrawable_butts = WebDriverWait(self.driver, self.get_web_driver_wait_time()).until(
+                EC.visibility_of_all_elements_located((By.XPATH, button_xpath))
+            )
+            self.logger.info(f"Found {len(all_withdrawable_butts)} withdraw buttons")
+            return all_withdrawable_butts[self.MIN_CONNECTION_WITHDRAWABLE:]
+
+        except Exception as  e:
+            self.logger.error(f"Error finding withdraw buttons: {str(e)}")
+            return []
+            
+
 
     @retry_with_delay(max_retries=3, delay=10, exceptions_to_raise=(NoConnectionException,), error_msg="Could not click next page button", call_func=lambda self: self.driver.refresh())
     def click_next_page(self, next_page_button):
@@ -717,11 +653,11 @@ class Linkedin:
         
 
     def generator_pages(self, button_xpath):
-        next_page_button = "//button[not(@disabled) and @aria-label='Next']"
+        next_page_button = "//button[not(@disabled) and span[contains(., 'Next')]]"
         modal_overlay = "//div[contains(@class, 'artdeco-modal-overlay')]"
         last_page_but_xpath = "(//button[not(@disabled) and contains(@aria-label, 'Page ')])[last()]"
         limit_search_xpath = "//div[@data-view-name='search-results-promo' and contains(., 'You’ve reached the monthly limit for profile searches')]"
-        results_container =  "//div[contains(@class, 'search-results-container')]"
+        results_container =  "//div[contains(@data-view-name, 'people-search-result')]"
 
         self.logger.info("Checking if card with connectable people exists")
         self._helper_check_card(results_container)
@@ -738,7 +674,6 @@ class Linkedin:
         for page in range(1, pages_before_quit+1):
 
             try:
-                # Wait for withdraw buttons on current page
                 all_buttons = WebDriverWait(self.driver, self.get_web_driver_wait_time()).until(
                     EC.visibility_of_any_elements_located((By.XPATH, button_xpath))
                 )
@@ -1072,7 +1007,8 @@ class Linkedin:
         
     def _search_common(self, org_name):
         selectors = {
-            'search_input': "//input[@type='text' and @placeholder='Search']",
+            'search_input': "//input[@placeholder='Search' or @aria-label='Search']",
+            'search_button': "//button[@aria-label='Click to start a search']",
             'company_button': "//div[@id='search-reusables__filters-bar']//button[contains(., 'Companies')]",
             'org_div': "//ul[@role = 'list']/li[1]/div/div[contains(@class, 'cursor-pointer')]",
             'org_div_no_comp': "//div[.//span[contains(., 'followers')]]/a[contains(@href, 'company')] | //div[.//span[contains(., 'followers')]]/a[contains(@href, 'school')]",
@@ -1085,8 +1021,19 @@ class Linkedin:
             )
         except:
             self.logger.warning("Could not find search input")
-            self.write_response(self.driver.page_source, "error_search_input.html")
-            return False
+            try:
+                search_button = WebDriverWait(self.driver, self.get_web_driver_wait_time()).until(
+                    EC.element_to_be_clickable((By.XPATH, selectors['search_button']))
+                )
+                ActionChains(self.driver).click(search_button).perform()
+                time.sleep(np.random.uniform(1, 2))
+                search_element = WebDriverWait(self.driver, self.get_web_driver_wait_time()).until(
+                    EC.visibility_of_element_located((By.XPATH, selectors['search_input']))
+                )
+            except:
+                self.logger.warning("Could not find search button")
+                self.write_response(self.driver.page_source, "error_search_input.html")
+                return False
         
         # Clear search input
         try:
@@ -1104,19 +1051,13 @@ class Linkedin:
 
         for char in search_text:
             try:
-                # Relocate element for each character to avoid stale reference
+                search_element.send_keys(char)
+                time.sleep(np.random.uniform(0.2, 0.6))
+            except Exception as e:
+                self.logger.warning(f"Could not type in search input: {str(e)}")
                 search_element = WebDriverWait(self.driver, self.get_web_driver_wait_time()).until(
                     EC.visibility_of_element_located((By.XPATH, selectors['search_input']))
                 )
-                search_element.send_keys(char)
-                time.sleep(np.random.uniform(0.1, 0.3))
-            except:
-                # If element becomes stale, find it again
-                search_element = WebDriverWait(self.driver, self.get_web_driver_wait_time()).until(
-                    EC.visibility_of_element_located((By.XPATH, selectors['search_input']))
-                )
-                search_element.send_keys(char)
-                
         time.sleep(np.random.uniform(0.5, 2))
         try:
             num_presses = self.choose_result()
@@ -1305,9 +1246,14 @@ class Linkedin:
     def _helper_check_card(self, card_xpath:str):
         if not isinstance(card_xpath, str):
             raise ValueError("Xpath must be a string")
-        element = WebDriverWait(self.driver, self.get_web_driver_wait_time()).until(
-            EC.visibility_of_element_located((By.XPATH, card_xpath))
-        )
+        try:
+            element = WebDriverWait(self.driver, self.get_web_driver_wait_time()).until(
+                EC.visibility_of_element_located((By.XPATH, card_xpath))
+            )
+        except TimeoutException:
+            self.logger.error(f"Card with xpath {card_xpath} not found")
+            self.write_response(self.driver.page_source, "error_no_card.html")
+            raise NoCardWithPeopleException(f"Card with xpath {card_xpath} not found")
         return element
     def _call_on_error_connect_to_alumni(self):
         self.logger.info("Calling `_call_on_error_connect_to_alumni` method")

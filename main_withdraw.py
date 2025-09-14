@@ -22,6 +22,7 @@ if __name__ == "__main__":
         linkedin.send_email("Withdraw limit reached", "Linkedin Bot - Withdraw limit reached")
 
     except HTTPConnectionPool as e:
+        linkedin.logger.error(f"HTTPConnectionPool error: {e}")
         pass
     except Exception as e:
         linkedin.logger.error(f"Error sending connection request: {e}")
