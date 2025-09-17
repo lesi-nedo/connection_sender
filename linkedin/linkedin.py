@@ -381,7 +381,7 @@ class Linkedin:
                         time.sleep(np.random.randint(2, 4))
                         self.reset_driver_if_needed()
                 except LastPageException as e:
-                    self.logger.info("Reached last page")
+                    self.logger.info(f"Thrown LastPageException, going to next organization: {str(e)}")
                     self.return_home()
                 except NoMoreOrgException as e:
                     self.logger.info("No more organizations to search")
@@ -627,8 +627,11 @@ class Linkedin:
         people_card_xpath = "//div//h2[contains(., 'People you may know')]"
     
         self.logger.info(f"Checking if 'People you may know' card exists")
-        self._helper_check_card(people_card_xpath)
-
+        try:
+            self._helper_check_card(people_card_xpath)
+        except NoCardWithPeopleException as e:
+            return
+        
         card_people = self.driver.find_element(By.XPATH, people_card_xpath)
         
         self.driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});", card_people)
@@ -660,7 +663,11 @@ class Linkedin:
         results_container =  "//div[contains(@data-view-name, 'people-search-result')]"
 
         self.logger.info("Checking if card with connectable people exists")
-        self._helper_check_card(results_container)
+        try:
+            
+            self._helper_check_card(results_container)
+        except NoCardWithPeopleException as e:
+            return
         try:
             last_page_button = WebDriverWait(self.driver, self.get_web_driver_wait_time()).until(
                 EC.element_to_be_clickable((By.XPATH, last_page_but_xpath))
@@ -714,7 +721,7 @@ class Linkedin:
                         pass  # No modal present
                     
                     if page == last_page:
-                        self.logger.info("Reached last page")
+                        self.logger.info("Reached last page. Normal")
                         return
                     self.click_next_page(next_page_button)
                     
@@ -964,7 +971,7 @@ class Linkedin:
         self.driver.get(self.home_page)
         time.sleep(np.random.uniform(2, 4))
 
-    def choose_result(self):
+    def choose_result(self, search_element_xpath):
         div_xpath = "//div[@aria-label='Search suggestions']"
         suggestion_xpath = "//div[contains(@id, 'basic-result-') and not(contains(., 'See all results'))]"
 
@@ -973,11 +980,33 @@ class Linkedin:
             WebDriverWait(self.driver, self.get_web_driver_wait_time()).until(
                 EC.visibility_of_element_located((By.XPATH, div_xpath))
             )
-            
-            # Get all suggestions
-            suggestions = WebDriverWait(self.driver, self.get_web_driver_wait_time()).until(
-                EC.visibility_of_any_elements_located((By.XPATH, suggestion_xpath))
+
+            search_element = WebDriverWait(self.driver, self.get_web_driver_wait_time()).until(
+                EC.element_to_be_clickable((By.XPATH, search_element_xpath))
             )
+            text_in_input = search_element.get_attribute("value")
+            self.logger.info(f"Text in search input: {len(text_in_input)} characters")
+            suggestions = []
+            while len(text_in_input) > 1:
+                try:
+                    # Get all suggestions
+                    suggestions = WebDriverWait(self.driver, self.get_web_driver_wait_time()).until(
+                        EC.visibility_of_any_elements_located((By.XPATH, suggestion_xpath))
+                    )
+                    break
+                except TimeoutException:
+                    pass
+                self.logger.info(f"Found {len(suggestions)} suggestions: {suggestions}")
+                search_element = WebDriverWait(self.driver, self.get_web_driver_wait_time()).until(
+                    EC.element_to_be_clickable((By.XPATH, search_element_xpath))
+                )
+                ActionChains(self.driver).move_to_element(search_element).click().perform()
+                self.logger.info("No suggestions found, waiting a bit. Removing last char")
+                time.sleep(np.random.uniform(0.5, 1.5))
+                search_element.send_keys(Keys.BACKSPACE)
+                time.sleep(np.random.uniform(0.5, 1.5))
+                text_in_input = search_element.get_attribute("value")
+                    
             self.logger.info(f"Found {len(suggestions)} search suggestions")
 
             if not suggestions:
@@ -1017,7 +1046,7 @@ class Linkedin:
         }
         try:
             search_element = WebDriverWait(self.driver, self.get_web_driver_wait_time()).until(
-                EC.visibility_of_element_located((By.XPATH, selectors['search_input']))
+                EC.element_to_be_clickable((By.XPATH, selectors['search_input']))
             )
         except:
             self.logger.warning("Could not find search input")
@@ -1028,11 +1057,12 @@ class Linkedin:
                 ActionChains(self.driver).click(search_button).perform()
                 time.sleep(np.random.uniform(1, 2))
                 search_element = WebDriverWait(self.driver, self.get_web_driver_wait_time()).until(
-                    EC.visibility_of_element_located((By.XPATH, selectors['search_input']))
+                    EC.element_to_be_clickable((By.XPATH, selectors['search_input']))
                 )
             except:
                 self.logger.warning("Could not find search button")
                 self.write_response(self.driver.page_source, "error_search_input.html")
+                self.return_home()
                 return False
         
         # Clear search input
@@ -1048,6 +1078,9 @@ class Linkedin:
             search_text = org_name[:int(len_name * np.random.uniform(0.7, 0.95))]
         else:
             search_text = org_name
+        actions = ActionChains(self.driver)
+        actions.move_to_element(search_element).click().perform()
+        time.sleep(np.random.uniform(0.5, 1.5))    
 
         for char in search_text:
             try:
@@ -1056,11 +1089,11 @@ class Linkedin:
             except Exception as e:
                 self.logger.warning(f"Could not type in search input: {str(e)}")
                 search_element = WebDriverWait(self.driver, self.get_web_driver_wait_time()).until(
-                    EC.visibility_of_element_located((By.XPATH, selectors['search_input']))
+                    EC.element_to_be_clickable((By.XPATH, selectors['search_input']))
                 )
         time.sleep(np.random.uniform(0.5, 2))
         try:
-            num_presses = self.choose_result()
+            num_presses = self.choose_result(selectors['search_input'])
             self.logger.info(f"Pressing down {num_presses} times")
             for _ in range(num_presses):
                 search_element.send_keys(Keys.DOWN)
@@ -1124,8 +1157,8 @@ class Linkedin:
     @retry_with_delay(max_retries=3, delay=10, error_msg="Could not search organization with limit reached")  
     def search_org_limit(self, org_name,):
         selectors ={
-            'people_tab': "//nav[@aria-label='Organization’s page navigation']//a[contains(., 'People')]",
-            'alumni_tab': "//nav[@aria-label='Organization’s page navigation']//a[contains(., 'Alumni')]",
+            'people_tab': "//nav[@aria-label='Organization’s page navigation']/descendant::a[contains(.,'People')]",
+            'alumni_tab': "//nav[@aria-label='Organization’s page navigation']/descendant::a[contains(., 'Alumni')]",
         }
 
         result = self._search_common(org_name)
@@ -1163,9 +1196,9 @@ class Linkedin:
         selectors = {
             
             'alumni_tab': "//div[@class='inline-block']/a[span[contains(., 'alumni')]]",
-            'employees_tab': "//div[@class='org-top-card-summary-info-list']//a",
-            'connection_2nd': "//ul[contains(@class, 'inline-flex')]/li/button[contains(., '2nd')]",
-            'connection_3rd': "//ul[contains(@class, 'inline-flex')]/li/button[contains(., '3rd')]"
+            'employees_tab': "//div/a[contains(@href,'/search/results/people/')]",
+            'connection_2nd': "//div[label[contains(., '2nd')] and input[@type='checkbox']]",
+            'connection_3rd': "//div[label[contains(., '3rd+')] and input[@type='checkbox']]"
         }
         
         result = self._search_common(org_name)
@@ -1193,12 +1226,13 @@ class Linkedin:
                 return False
         try:
             # Select connection levels
+            actions = ActionChains(self.driver)
             for connection in ['connection_2nd', 'connection_3rd']:
-                button = WebDriverWait(self.driver, self.get_web_driver_wait_time()).until(
+                div_el = WebDriverWait(self.driver, self.get_web_driver_wait_time()).until(
                     EC.element_to_be_clickable((By.XPATH, selectors[connection]))
                 )
                 # self.human_like_mouse_move(button)
-                ActionChains(self.driver).click(button).perform()
+                actions.move_to_element(div_el).click().perform()   
                 time.sleep(np.random.uniform(1, 2))
         except:
             pass
@@ -1241,7 +1275,7 @@ class Linkedin:
             self.logger.info("No connect services card found")
             return False
                 
-    @retry_with_delay(max_retries=10, delay=30, raise_if_fail=NoCardWithPeopleException, 
+    @retry_with_delay(max_retries=2, delay=30, raise_if_fail=NoCardWithPeopleException, 
                         error_msg="Could not find card with people to connect")
     def _helper_check_card(self, card_xpath:str):
         if not isinstance(card_xpath, str):
@@ -1282,7 +1316,7 @@ class Linkedin:
             'button_send2': "//button[contains(@aria-label, 'Send without a note')]",
             'dismiss_button': "//button[@aria-label='Dismiss']",
             'close_to_reach_limit_button': "//div[//h2[contains(., \"You're approaching the weekly invitation limit\") or contains(., \"You're close to the weekly invitation limit\")]]/button[contains(@aria-label, 'Got it')]",
-            'reached_limit_button': "//button[contains(@aria-label, 'Got it')]",
+            'reached_limit_msg': "//div[@role='alert']/descendant::p[contains(., 'Please try again next week')]",
             'limit_search_xpath':"//div[@data-view-name='search-results-promo' and contains(., 'You’ve reached the monthly limit for profile searches')]",
             'growing_popup': "//div[//h2[contains(., \"You're growing your network!\")]]/button[@aria-label='Got it']",
             'popup_box': "//div[contains(@class, 'ip-fuse-limit-alert') and @role='dialog']"
@@ -1341,7 +1375,8 @@ class Linkedin:
                     # Try JavaScript click if regular click fails
                     ActionChains(self.driver).click(clickable_button).perform()
                     
-                    time.sleep(np.random.uniform(1.5, 4))
+                    time.sleep(np.random.uniform(1, 2))
+                    clickable_button = None
                     try:
                         clickable_button = WebDriverWait(self.driver, self.get_web_driver_wait_time()).until(
                             EC.element_to_be_clickable((By.XPATH, selectors['button_send1']))
@@ -1352,21 +1387,27 @@ class Linkedin:
                                 EC.element_to_be_clickable((By.XPATH, selectors['button_send2']))
                             )
                         except:
-                            try:
-                                toast_xpath = "//div[contains(@class, 'artdeco-toast-item') and //p[@class='artdeco-toast-item__message']]/li-icon[@type='error-pebble-icon']"
-                                toast_element = WebDriverWait(self.driver, self.get_web_driver_wait_time()).until(
-                                    EC.visibility_of_element_located((By.XPATH, toast_xpath))
-                                )
-                                self.logger.info(f"Error toast message found: {toast_element.text}")
-                            except TimeoutException:
-                                self.logger.info("No error toast message found, will continue")
-                                continue
-                            except Exception as e:
-                                self.logger.error(f"Error in toast message: {str(e)}")
-                                raise NoSendButtonException("No send button found")
-                    self.driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});", clickable_button)
-                    ActionChains(self.driver).click(clickable_button).perform()
-                    time.sleep(np.random.uniform(1.5, 2.5))
+                            pass
+                    
+                    if clickable_button:
+                        self.driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});", clickable_button)
+                        ActionChains(self.driver).click(clickable_button).perform()
+                        time.sleep(np.random.uniform(1.5, 2.5))
+
+                    try:
+                        WebDriverWait(self.driver, self.get_web_driver_wait_time()).until(
+                            EC.visibility_of_element_located((By.XPATH, selectors['reached_limit_msg']))
+                        )
+                        self.logger.info("Found reached limit message")
+                        self.write_response(self.driver.page_source, "reached_limit.html")
+
+                        time.sleep(np.random.uniform(1.5, 2.5))
+                        self.logger.info("Reached weekly connection limit")
+                        raise ReachedWeeklyLimitException("Reached connection limit")
+                    except ReachedWeeklyLimitException:
+                        raise
+                    except:
+                        pass
 
                     try:
                         dismiss_button = WebDriverWait(self.driver, self.get_web_driver_wait_time()).until(
@@ -1401,22 +1442,7 @@ class Linkedin:
                                 ActionChains(self.driver).click(close_to_reach_limit_button).perform()
                                 time.sleep(np.random.uniform(1.5, 2.5))
                             except TimeoutException as e:
-                                try:
-                                    reached_limit_button = WebDriverWait(self.driver, self.get_web_driver_wait_time()).until(
-                                        EC.element_to_be_clickable((By.XPATH, selectors['reached_limit_button']))
-                                    )
-                                    self.logger.info("Found reached limit button, clicking it")
-                                    self.write_response(self.driver.page_source, "reached_limit.html")
-
-                                    ActionChains(self.driver).click(reached_limit_button).perform()
-
-                                    time.sleep(np.random.uniform(1.5, 2.5))
-                                    self.logger.info("Reached weekly connection limit")
-                                    raise ReachedWeeklyLimitException("Reached connection limit")
-                                except ReachedWeeklyLimitException:
-                                    raise
-                                except:
-                                    pass
+                                pass
                     except TimeoutException as e:
                         pass
                     time.sleep(np.random.uniform(1, 2))
